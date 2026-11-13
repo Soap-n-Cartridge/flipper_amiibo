@@ -26,6 +26,8 @@ apps_data/flipper_amiibo/db/
 
 Put `.bin` dumps (540 bytes) or Flipper `.nfc` files under `db/`, in series folders if you want. A folder named `ZE` always uses a new UID. A folder named `SSB` always keeps the UID stored in the file.
 
+All NFC files must be added the the DB folder before use. You can find these files online, in various places. Some sources have thousands of Amiibo files available, for use in many different games.
+
 ## On device
 
 - Browse dumps, then Emulate.
