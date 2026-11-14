@@ -5,6 +5,7 @@
 #include <furi_hal.h>
 #include <gui/gui.h>
 #include <gui/modules/submenu.h>
+#include <gui/modules/text_box.h>
 #include <gui/modules/widget.h>
 #include <gui/view_dispatcher.h>
 #include <nfc/nfc.h>
@@ -21,6 +22,7 @@ typedef enum {
     ViewMenu,
     ViewTag,
     ViewEmulate,
+    ViewHelp,
 } ViewId;
 
 typedef enum {
@@ -29,6 +31,7 @@ typedef enum {
     MenuAuto,
     MenuSave,
     MenuKeys,
+    MenuHelp,
 } MenuId;
 
 typedef enum {
@@ -42,11 +45,13 @@ typedef struct {
     ViewDispatcher* dispatcher;
     Submenu* submenu;
     Widget* widget;
+    TextBox* help;
     NotificationApp* notifications;
     DialogsApp* dialogs;
     Storage* storage;
     FuriString* path;
     FuriString* info;
+    FuriString* help_text;
 
     NfcDevice* device;
     Nfc* nfc;
@@ -64,6 +69,36 @@ typedef struct {
     char key_path[96];
     uint32_t menu_index;
 } App;
+
+static const char HELP[] =
+    "Keys\n"
+    "Copy a 160-byte file named\n"
+    "key_retail.bin to:\n"
+    "apps_data/flipper_amiibo/\n"
+    "\n"
+    "Byte order: the 80-byte data\n"
+    "key, then the 80-byte tag key.\n"
+    "Those two parts are often\n"
+    "named unfixed-info.bin and\n"
+    "locked-secret.bin.\n"
+    "\n"
+    "An existing amiibo_keys.bin\n"
+    "in nfc/assets or nfc is also\n"
+    "accepted.\n"
+    "\n"
+    "This app does not include\n"
+    "the key. Use a key file you\n"
+    "already have.\n"
+    "\n"
+    "Tags\n"
+    "Put .bin or .nfc dumps in:\n"
+    "apps_data/flipper_amiibo/db/\n"
+    "\n"
+    "Browse starts there. A .bin\n"
+    "dump is 540 bytes. A folder\n"
+    "named ZE always signs a new\n"
+    "UID. A folder named SSB keeps\n"
+    "the UID stored in the file.\n";
 
 static void show_menu(App* app);
 static void show_tag(App* app);
@@ -333,6 +368,7 @@ static void show_menu(App* app) {
         MenuKeys,
         submenu_callback,
         app);
+    submenu_add_item(app->submenu, "Help", MenuHelp, submenu_callback, app);
     submenu_set_selected_item(app->submenu, app->menu_index);
     app->current = ViewMenu;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
@@ -498,6 +534,9 @@ static bool custom_event(void* context, uint32_t event) {
         } else {
             app_alert(app, "Keys missing", "Put key_retail.bin\nin apps_data/\nflipper_amiibo");
         }
+    } else if(event == MenuHelp) {
+        app->current = ViewHelp;
+        view_dispatcher_switch_to_view(app->dispatcher, ViewHelp);
     } else if(event == GuiButtonTypeLeft + 100) {
         if(assign_uid(app)) show_tag(app);
     } else if(event == GuiButtonTypeCenter + 100) {
@@ -515,7 +554,7 @@ static bool back_event(void* context) {
         show_tag(app);
         return true;
     }
-    if(app->current == ViewTag) {
+    if(app->current == ViewTag || app->current == ViewHelp) {
         show_menu(app);
         return true;
     }
@@ -539,10 +578,14 @@ int32_t flipper_amiibo_app(void* arg) {
 
     app->path = furi_string_alloc_set(APP_DATA_PATH("db"));
     app->info = furi_string_alloc();
+    app->help_text = furi_string_alloc_set(HELP);
     app->device = nfc_device_alloc();
     app->dispatcher = view_dispatcher_alloc();
     app->submenu = submenu_alloc();
     app->widget = widget_alloc();
+    app->help = text_box_alloc();
+    text_box_set_text(app->help, furi_string_get_cstr(app->help_text));
+    text_box_set_font(app->help, TextBoxFontText);
 
     view_dispatcher_set_event_callback_context(app->dispatcher, app);
     view_dispatcher_set_custom_event_callback(app->dispatcher, custom_event);
@@ -551,6 +594,7 @@ int32_t flipper_amiibo_app(void* arg) {
 
     view_dispatcher_add_view(app->dispatcher, ViewMenu, submenu_get_view(app->submenu));
     view_dispatcher_add_view(app->dispatcher, ViewTag, widget_get_view(app->widget));
+    view_dispatcher_add_view(app->dispatcher, ViewHelp, text_box_get_view(app->help));
 
     show_menu(app);
     view_dispatcher_run(app->dispatcher);
@@ -559,10 +603,13 @@ int32_t flipper_amiibo_app(void* arg) {
 
     view_dispatcher_remove_view(app->dispatcher, ViewMenu);
     view_dispatcher_remove_view(app->dispatcher, ViewTag);
+    view_dispatcher_remove_view(app->dispatcher, ViewHelp);
+    text_box_free(app->help);
     widget_free(app->widget);
     submenu_free(app->submenu);
     view_dispatcher_free(app->dispatcher);
     nfc_device_free(app->device);
+    furi_string_free(app->help_text);
     furi_string_free(app->info);
     furi_string_free(app->path);
     furi_record_close(RECORD_GUI);
