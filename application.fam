@@ -7,8 +7,8 @@ App(
     fap_category="NFC",
     fap_libs=["mbedtls"],
     requires=["gui"],
-    fap_icon="flipper-amiibo_10px.png",
-    fap_version="0.2",
+    fap_icon="icons/flipper-amiibo_10px.png",
+    fap_version="1.0",
     fap_author="Soap-n-Cartridge",
-    fap_description="Browse amiibo dumps, emulate NTAG215, and sign a new UID per scan.",
+    fap_description="Emulate Amiibos from the SD card. Scan, save favorites, and make a new ID.",
 )

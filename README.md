@@ -1,69 +1,83 @@
 # Amiibo Emulator
 
-Flipper Zero app that emulates NTAG215 dumps and can present a new tag UID on each scan.
+This app can back up Amiibos you already own.
 
-The original `.bin` keeps its UID until you press Save. A new UID is signed in memory, the same way a Joysfusion / Pixl.js unit does it. Nintendo's key file is not included.
+You do not need a downloaded Amiibo database. You do not need a key file for that.
 
-## Install
+1. Scan a real Amiibo.
+2. It stays under **Scanned Amiibos**. **Fav** keeps a copy in **Favorites**.
+3. Press **Emulate** and hold the Flipper on the game reader. The game sees that same Amiibo.
 
-Build with the Flipper SDK:
+The app cannot include Nintendo's key file. You add that file yourself.
 
-```
-ufbt
-ufbt launch
-```
+**New UID** and **Auto UID** cannot change the ID unless that key file is on the SD card. **Emulate** of a scanned Amiibo still works without it. It uses the ID from your Amiibo.
 
-Copy `dist/flipper_amiibo.fap` to `SD Card/apps/NFC/` if you are installing it by hand.
+## The key file
 
-## SD card
+If you have the key file, put it here:
 
-```
-apps_data/flipper_amiibo/key_retail.bin
-apps_data/flipper_amiibo/db/
-```
+`apps_data/flipper_amiibo/key_retail.bin`
 
-`key_retail.bin` is 160 bytes: the 80-byte data key (`unfixed-info.bin`) followed by the 80-byte tag key (`locked-secret.bin`). The app also checks `/ext/nfc/assets/amiibo_keys.bin` and `/ext/nfc/amiibo_keys.bin`.
+If `amiibo_keys.bin` is already in the `nfc` folder, you can leave it there. The app will find it.
 
-Put `.bin` dumps (540 bytes) or Flipper `.nfc` files under `db/`, in series folders if you want. A folder named `ZE` always uses a new UID. A folder named `SSB` always keeps the UID stored in the file. NFC files have to be in the `db` folder before the app can use them.
+Open **Settings** to see if the key is ready. That screen says **Keys: Loaded** or **Keys: Missing**. No other screen shows that line.
 
-## How to use this
+Without that file, **New UID** and **Auto UID** leave the ID unchanged.
 
-This app needs a key file and tag files. It does not come with them. Use Google to search for Amiibo databases. Many contain the key files you will need as well.
+## Amiibo files
 
-### The key
+A downloaded database is optional. If you have `.bin` or `.nfc` files, put them here:
 
-The key is a small file that lets the game accept the tag.
+`apps_data/flipper_amiibo/db/`
 
-1. Find the key file in an Amiibo database.
-2. The file has two halves, stuck together in this order:
-   - First half: the data key. Its usual name is `unfixed-info.bin`.
-   - Second half: the tag key. Its usual name is `locked-secret.bin`.
-3. Save that whole file as `key_retail.bin`.
-4. Put it on the Flipper SD card in this folder: `apps_data/flipper_amiibo/`.
-5. If you already have `amiibo_keys.bin` in the `nfc/assets` folder or the `nfc` folder, you can leave it there. The app will find it.
+A `.bin` file should be 540 bytes. You can put files in folders inside `db`.
 
-Open the app and look at the Keys line. It should say "Keys: loaded".
+- A folder named `ZE` always makes a new ID. That needs the key file.
+- A folder named `SSB` keeps the ID saved in the file.
 
-### The tags
+## Main menu
 
-A tag file is one figure.
+The main menu is a row of pictures. Left and Right move. OK opens the picture. The row wraps.
 
-1. Use a `.bin` file or a `.nfc` file from an Amiibo database.
-2. A `.bin` file should be 540 bytes long.
-3. Copy the files into this folder on the SD card: `apps_data/flipper_amiibo/db/`. The app uses a tag only after it is in that folder.
-4. You can make folders inside `db`.
-   - A folder named `ZE` always makes a new ID.
-   - A folder named `SSB` keeps the ID that is already in the file.
-5. On the Flipper, open Amiibo Emulator.
-6. Choose Browse dumps and pick a file.
-7. Choose Emulate, then hold the Flipper to the game reader.
-8. Choose Help on the main menu to read a short version of these steps on the Flipper.
+1. **Amiibo Database**
+2. **Favorites**
+3. **Scan Amiibos**
+4. **Settings**
+5. **Help**
 
-## On device
+From a section, Left and Right jump to the next section. Back returns to the picture row.
 
-- Browse dumps, then Emulate.
-- Auto UID, when on, signs a new 7-byte UID before the tag is presented. Press Next ID on the emulate screen for another serial without leaving the screen.
-- New UID does the same thing once, without leaving the detail screen.
-- Save writes the current UID and any pages the console wrote back to the same file.
+## Amiibo Database
 
-Games that remember the tag serial treat each new UID as another figure. Games that remember the character still apply that character's own limit.
+Folders are listed first, then files, A to Z. Up and Down on a tag stay in that folder.
+
+Open a tag. The buttons are **Fav**, **Emulate**, and **New UID**.
+
+- **Emulate** plays the Amiibo. Hold the Flipper on the game reader.
+- **Fav** saves a copy in Favorites and stays on this tag. A short message says **Added to Favorites**.
+- **New UID** makes a new ID in memory. It does not change the database file. This needs the key file.
+
+## Favorites
+
+Open a saved tag. The buttons are **New UID**, **Emulate**, and **Del**.
+
+- **New UID** asks first. Press Left again to change the ID. Back cancels. The new ID is saved on that favorite. It is not copied to Scanned Amiibos. This needs the key file.
+- **Del** asks before it removes the tag. Press **Delete** to remove it. **Cancel** or Back keeps it.
+
+## Scan Amiibos
+
+Hold a real Amiibo on the back of the Flipper. The name is already on it.
+
+The scan stays under **Scanned Amiibos**. **Fav** keeps a copy in Favorites and leaves the scan where it is. The ID stays the same, so **Emulate** is a backup of that Amiibo.
+
+If a scan does not work, press **OK** to try again. Back returns to the Scan menu.
+
+## Settings
+
+- **Auto UID**, when on, makes a new ID each time you emulate a database file. **Next ID** makes another one on that screen. Both need the key file. A scan or a favorite keeps its own ID.
+- **Keys** says whether the key file is ready.
+- **Clean added tags** removes Favorites and scans. Hold Up for 2 seconds. Database files stay.
+
+## Install by hand
+
+Build with `ufbt`, then copy `dist/flipper_amiibo.fap` to `SD Card/apps/NFC/`.

@@ -1,5 +1,5 @@
-v0.2:
-Adds a Help screen. It explains where to put the key file and where to put the tag dumps.
+v1.0:
+The main menu is a row of pictures: Amiibo Database, Favorites, Scan Amiibos, Settings, and Help. You can scan a real Amiibo, save a favorite, and make a new ID. On a favorite, New UID asks first and then saves the new ID on that favorite. Settings is the only screen that says whether the key file is ready.
 
 v0.1:
-Initial release. Browse .bin and .nfc dumps on the SD card, emulate them as NTAG215, and sign a new UID for each scan. ZE folders always use a new ID. SSB folders keep the ID stored in the file.
+First version. Browse dump files on the SD card and emulate them.
