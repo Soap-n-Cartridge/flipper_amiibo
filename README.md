@@ -34,7 +34,7 @@ If a scan does not work, press OK to try again. Back returns to the Scan menu.
 
 ## Favorites
 
-Open a saved Amiibo. The buttons are New UID, Emulate, and Del.
+Open a saved Amiibo. The buttons are New UID, Emulate, and Del. Saving a favorite Amiibo is particularly useful for LoZ:OOT 40th, where the fifth daily scan of your Amiibo gives you a bonus scan. In order to reach this requirement, the UID of the Amiibo tag must not change.
 
 - **Emulate** plays that Amiibo. Hold the Flipper on the game reader.
 - **New UID** asks first. Press it again to make a new ID. Back cancels. The new ID is saved on that favorite. This needs the key file.
