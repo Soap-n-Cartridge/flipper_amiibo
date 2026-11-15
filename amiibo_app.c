@@ -745,7 +745,11 @@ static void label_with_count(
     unsigned count,
     const uint8_t* table,
     uint16_t target) {
-    char number[8];
+    if(count == 0) {
+        furi_string_set(out, name);
+        return;
+    }
+    char number[12];
     snprintf(number, sizeof(number), "%u", count);
     uint16_t number_w = text_px(number, table);
     uint16_t space_w = table[0];
@@ -770,19 +774,36 @@ static void label_with_count(
 
 static unsigned count_tags_in(App* app, const char* folder) {
     unsigned count = 0;
+    FuriString** subs = NULL;
+    uint16_t sub_count = 0;
+    uint16_t sub_cap = 0;
     File* dir = storage_file_alloc(app->storage);
     if(storage_dir_open(dir, folder)) {
         FileInfo info;
         char name[128];
         while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
             if(name[0] == '\0' || name[0] == '.') continue;
-            if(info.flags & FSF_DIRECTORY) continue;
-            if(!ends_with_i(name, ".bin") && !ends_with_i(name, ".nfc")) continue;
-            count++;
+            if(info.flags & FSF_DIRECTORY) {
+                if(sub_count == sub_cap) {
+                    uint16_t next = sub_cap == 0 ? 8 : (uint16_t)(sub_cap * 2);
+                    FuriString** grown = realloc(subs, (size_t)next * sizeof(FuriString*));
+                    if(!grown) continue;
+                    subs = grown;
+                    sub_cap = next;
+                }
+                subs[sub_count++] = furi_string_alloc_printf("%s/%s", folder, name);
+            } else if(ends_with_i(name, ".bin") || ends_with_i(name, ".nfc")) {
+                count++;
+            }
         }
         storage_dir_close(dir);
     }
     storage_file_free(dir);
+    for(uint16_t i = 0; i < sub_count; i++) {
+        count += count_tags_in(app, furi_string_get_cstr(subs[i]));
+        furi_string_free(subs[i]);
+    }
+    free(subs);
     return count;
 }
 
