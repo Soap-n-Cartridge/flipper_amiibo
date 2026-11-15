@@ -1,6 +1,6 @@
 # Amiibo Emulator
 
-This app utilizes a downloaded library of Amiibo files, and emulates them for use with compatible Nintendo games on systems, such as Switch / Switch 2, 3DS, and Wii. It also saves Amiibos you already own, so you can use them again later.
+This app utilizes a downloaded library of Amiibo files, and emulates them for use with compatible Nintendo games on systems, such as Switch / Switch 2, 3DS, and Wii. It also saves Amiibos you already own, so you can use them again later. The code was written with an AI coding assistant under my direction, and I tested it on my Flipper Zero (official firmware 1.5.1)
 
 You do not need a downloaded list of Amiibos. You do not need a key file to save and play your own.
 
