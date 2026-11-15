@@ -1,6 +1,6 @@
 # Amiibo Emulator
 
-This app saves Amiibos you already own, so you can use them again later.
+This app utilizes a downloaded library of Amiibo files, and emulates them for use with compatible Nintendo games on systems, such as Switch / Switch 2, 3DS, and Wii. It also saves Amiibos you already own, so you can use them again later.
 
 You do not need a downloaded list of Amiibos. You do not need a key file to save and play your own.
 
@@ -8,7 +8,7 @@ You do not need a downloaded list of Amiibos. You do not need a key file to save
 2. Save a copy in Favorites.
 3. Press Emulate and hold the Flipper on the game reader. The game sees that same Amiibo.
 
-The app cannot include Nintendo's key file. You add that file yourself. A new ID needs that key. Without it, New UID and Auto UID cannot change the ID. Emulate still works. It uses the ID from your Amiibo.
+The app cannot include Nintendo's key file, or the specific Amiibo files. You add those yourself. A new ID needs that key. Without it, New UID and Auto UID cannot change the ID. Emulate still works. It uses the ID from your Amiibo.
 
 Open Help in the app for the short steps on the Flipper.
 
@@ -63,3 +63,29 @@ A folder named ZE always tries to make a new ID. That needs the key file. A fold
 The app cannot ship Nintendo's key file. Emulate of a scanned Amiibo works without it.
 
 New UID and Auto UID cannot change the ID unless that key file is on the SD card. If you already have the file, put key_retail.bin in the app folder apps_data/flipper_amiibo. If amiibo_keys.bin is already in the nfc folder, you can leave it there. Open Settings to see if the key is ready.
+
+## Copyright & Trademark Notice
+
+amiibo™ and Nintendo® are trademarks of Nintendo Co., Ltd. All associated characters, names, artwork, designs, and other intellectual property are owned by Nintendo and/or their respective rights holders. © Nintendo. All rights reserved.
+
+This application is an independently developed, third-party utility and is not affiliated with, endorsed by, sponsored by, licensed by, or otherwise officially associated with Nintendo Co., Ltd. or any of its subsidiaries or affiliates.
+
+## Application Usage & User Responsibility
+
+This application provides tools for the local storage, management, scanning, and transmission of user-supplied amiibo NFC data. The application does not include, host, distribute, or provide downloadable amiibo NFC data.
+
+Users are responsible for obtaining and managing their own NFC data and for ensuring that their use of such data complies with applicable laws, intellectual property rights, and relevant terms of service.
+
+## NFC Data & UID Functionality
+
+This application includes functionality for generating randomized NFC unique identifiers (UIDs), which may alter how compatible games or devices recognize previously used NFC data.
+
+Such functionality is independently implemented and is not authorized, endorsed, or supported by Nintendo. Users acknowledge that modifying or randomizing NFC identifiers may affect normal game functionality or circumvent software-imposed usage limitations.
+
+Use of these features is undertaken at the user's own discretion and responsibility.
+
+## Disclaimer of Affiliation
+
+All product names, trademarks, and registered trademarks referenced within this application remain the property of their respective owners. References to Nintendo products are made solely for identification and compatibility purposes.
+
+No affiliation with or endorsement by Nintendo is expressed or implied.
