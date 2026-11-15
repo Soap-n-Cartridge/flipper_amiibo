@@ -58,7 +58,7 @@ typedef enum {
 #define FILE_MAX 40
 #define MenuFileBase 400
 
-#define APP_VERSION "1.0"
+#define APP_VERSION "1.1"
 
 typedef enum {
     UidFollowSetting,
@@ -716,11 +716,89 @@ static void show_menu(App* app) {
     view_dispatcher_switch_to_view(app->dispatcher, ViewCarousel);
 }
 
+static const uint8_t FONT_SEC_W[95] = {
+    2, 2, 4, 6, 6, 8, 7, 2, 4, 4, 6, 6, 3, 6, 2, 8, 6, 3, 6, 6, 6, 6, 6, 6, 6, 6, 2, 3, 4,
+    6, 4, 6, 9, 6, 6, 6, 6, 6, 6, 6, 6, 2, 6, 6, 6, 8, 6, 6, 6, 6, 6, 6, 6, 6, 6, 8, 6, 6,
+    6, 4, 8, 4, 6, 6, 4, 5, 5, 5, 5, 5, 3, 5, 5, 2, 3, 5, 2, 8, 5, 5, 5, 5, 4, 4, 4, 5, 5,
+    8, 5, 5, 5, 4, 2, 4, 7,
+};
+
+static const uint8_t FONT_PRI_W[95] = {
+    3, 4, 5, 6, 6, 8, 8, 3, 4, 4, 4, 6, 3, 5, 3, 4, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 3, 3, 5,
+    6, 5, 6, 11, 8, 7, 8, 7, 6, 6, 8, 7, 3, 6, 7, 6, 10, 8, 8, 7, 8, 7, 7, 7, 7, 8, 11, 8,
+    9, 7, 4, 4, 4, 5, 6, 3, 6, 6, 5, 6, 6, 4, 6, 6, 3, 3, 6, 3, 9, 6, 6, 6, 6, 4, 6, 4, 6,
+    6, 8, 7, 6, 6, 5, 3, 5, 6,
+};
+
+static uint16_t text_px(const char* text, const uint8_t* table) {
+    uint16_t width = 0;
+    for(; *text != '\0'; text++) {
+        unsigned char c = (unsigned char)*text;
+        width = (uint16_t)(width + ((c < 32 || c > 126) ? 6 : table[c - 32]));
+    }
+    return width;
+}
+
+static void label_with_count(
+    FuriString* out,
+    const char* name,
+    unsigned count,
+    const uint8_t* table,
+    uint16_t target) {
+    char number[8];
+    snprintf(number, sizeof(number), "%u", count);
+    uint16_t number_w = text_px(number, table);
+    uint16_t space_w = table[0];
+    if(space_w == 0) space_w = 2;
+    uint16_t name_w = 0;
+    furi_string_reset(out);
+    if(number_w < target) {
+        for(const char* letter = name; *letter != '\0'; letter++) {
+            unsigned char c = (unsigned char)*letter;
+            uint16_t glyph = (c < 32 || c > 126) ? 6 : table[c - 32];
+            if((uint16_t)(name_w + glyph + space_w + number_w) > target) break;
+            furi_string_push_back(out, *letter);
+            name_w = (uint16_t)(name_w + glyph);
+        }
+        while((uint16_t)(name_w + space_w + number_w) <= target) {
+            furi_string_push_back(out, ' ');
+            name_w = (uint16_t)(name_w + space_w);
+        }
+    }
+    furi_string_cat(out, number);
+}
+
+static unsigned count_tags_in(App* app, const char* folder) {
+    unsigned count = 0;
+    File* dir = storage_file_alloc(app->storage);
+    if(storage_dir_open(dir, folder)) {
+        FileInfo info;
+        char name[128];
+        while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+            if(name[0] == '\0' || name[0] == '.') continue;
+            if(info.flags & FSF_DIRECTORY) continue;
+            if(!ends_with_i(name, ".bin") && !ends_with_i(name, ".nfc")) continue;
+            count++;
+        }
+        storage_dir_close(dir);
+    }
+    storage_file_free(dir);
+    return count;
+}
+
 static void show_scan(App* app) {
+    FuriString* scanned = furi_string_alloc();
+    label_with_count(
+        scanned,
+        "Scanned Amiibos",
+        count_tags_in(app, APP_DATA_PATH("scanned")),
+        FONT_SEC_W,
+        111);
     submenu_reset(app->submenu);
     submenu_set_header(app->submenu, "Scan Amiibos");
     submenu_add_item(app->submenu, "Scan Amiibos", MenuRead, submenu_callback, app);
-    submenu_add_item(app->submenu, "Scanned Amiibos", MenuUnsaved, submenu_callback, app);
+    submenu_add_item(app->submenu, furi_string_get_cstr(scanned), MenuUnsaved, submenu_callback, app);
+    furi_string_free(scanned);
     if(app->my_index != MenuRead && app->my_index != MenuUnsaved) app->my_index = MenuRead;
     submenu_set_selected_item(app->submenu, app->my_index);
     app->current = ViewMy;
@@ -1123,7 +1201,7 @@ static void finish_read(App* app, bool ok) {
     app->policy = UidForceOff;
     if(!save_dump(app)) app->dirty = true;
     app->browse = BrowseNone;
-    show_tag(app);
+    show_scan(app);
 }
 
 static void show_file_list(App* app, bool saved) {
@@ -1144,8 +1222,16 @@ static void show_file_list(App* app, bool saved) {
     }
     storage_file_free(dir);
 
+    FuriString* header = furi_string_alloc();
+    label_with_count(
+        header,
+        saved ? "Favorites" : "Scanned Amiibos",
+        count_tags_in(app, folder),
+        FONT_PRI_W,
+        118);
     submenu_reset(app->submenu);
-    submenu_set_header(app->submenu, saved ? "Favorites" : "Scanned Amiibos");
+    submenu_set_header(app->submenu, furi_string_get_cstr(header));
+    furi_string_free(header);
     if(app->file_count == 0) {
         submenu_add_item(app->submenu, "None yet", MenuEmpty, submenu_callback, app);
     } else {
@@ -1509,15 +1595,23 @@ static void db_load(App* app) {
 
 static void show_database(App* app) {
     db_load(app);
-    submenu_reset(app->submenu);
+    FuriString* title = furi_string_alloc();
     if(db_is_root(app)) {
-        submenu_set_header(app->submenu, "Amiibo Database");
+        furi_string_set(title, "Amiibo Database");
     } else {
-        FuriString* header = furi_string_alloc();
-        path_extract_filename(app->db_path, header, false);
-        submenu_set_header(app->submenu, furi_string_get_cstr(header));
-        furi_string_free(header);
+        path_extract_filename(app->db_path, title, false);
     }
+    FuriString* header = furi_string_alloc();
+    label_with_count(
+        header,
+        furi_string_get_cstr(title),
+        count_tags_in(app, furi_string_get_cstr(app->db_path)),
+        FONT_PRI_W,
+        118);
+    furi_string_free(title);
+    submenu_reset(app->submenu);
+    submenu_set_header(app->submenu, furi_string_get_cstr(header));
+    furi_string_free(header);
     if(app->db_count == 0) {
         submenu_add_item(app->submenu, "None yet", MenuEmpty, submenu_callback, app);
     } else {
@@ -1526,6 +1620,20 @@ static void show_database(App* app) {
             FuriString* label = furi_string_alloc_set(app->db_names[i]);
             if(app->db_is_dir[i]) {
                 furi_string_cat(label, "/");
+                FuriString* child = furi_string_alloc_printf(
+                    "%s/%s",
+                    furi_string_get_cstr(app->db_path),
+                    furi_string_get_cstr(app->db_names[i]));
+                FuriString* row = furi_string_alloc();
+                label_with_count(
+                    row,
+                    furi_string_get_cstr(label),
+                    count_tags_in(app, furi_string_get_cstr(child)),
+                    FONT_SEC_W,
+                    111);
+                furi_string_set(label, row);
+                furi_string_free(row);
+                furi_string_free(child);
             } else {
                 size_t dot = furi_string_search_rchar(label, '.');
                 if(dot != FURI_STRING_FAILURE) furi_string_left(label, dot);
