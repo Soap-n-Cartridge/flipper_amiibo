@@ -16,9 +16,9 @@ The app cannot include Nintendo's key file. You add that file yourself.
 
 If you have the key file, put it here:
 
-`apps_data/flipper_amiibo/key_retail.bin`
+apps_data/flipper_amiibo/key_retail.bin
 
-If `amiibo_keys.bin` is already in the `nfc` folder, you can leave it there. The app will find it.
+If amiibo_keys.bin is already in the nfc folder, you can leave it there. The app will find it.
 
 Open **Settings** to see if the key is ready. That screen says **Keys: Loaded** or **Keys: Missing**. No other screen shows that line.
 
@@ -26,14 +26,14 @@ Without that file, **New UID** and **Auto UID** leave the ID unchanged.
 
 ## Amiibo files
 
-A downloaded database is optional. If you have `.bin` or `.nfc` files, put them here:
+A downloaded database is optional. If you have .bin or .nfc files, put them here:
 
-`apps_data/flipper_amiibo/db/`
+apps_data/flipper_amiibo/db/
 
-A `.bin` file should be 540 bytes. You can put files in folders inside `db`.
+A .bin file should be 540 bytes. You can put files in folders inside db.
 
-- A folder named `ZE` always makes a new ID. That needs the key file.
-- A folder named `SSB` keeps the ID saved in the file.
+- A folder named ZE always makes a new ID. That needs the key file.
+- A folder named SSB keeps the ID saved in the file.
 
 ## Main menu
 
@@ -80,4 +80,4 @@ If a scan does not work, press **OK** to try again. Back returns to the Scan men
 
 ## Install by hand
 
-Build with `ufbt`, then copy `dist/flipper_amiibo.fap` to `SD Card/apps/NFC/`.
+Build with ufbt, then copy dist/flipper_amiibo.fap to SD Card/apps/NFC/.
