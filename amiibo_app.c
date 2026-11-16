@@ -31,6 +31,7 @@ typedef enum {
     ViewTag,
     ViewEmulate,
     ViewHelp,
+    ViewAbout,
     ViewRead,
     ViewSettings,
     ViewMy,
@@ -51,6 +52,7 @@ typedef enum {
     MenuAuto,
     MenuKeys,
     MenuClean,
+    MenuAbout,
     MenuEmpty,
 } MenuId;
 
@@ -88,6 +90,7 @@ typedef struct {
     View* cleanup_view;
     FuriTimer* menu_timer;
     View* help_view;
+    View* about_view;
     View* tag_buttons;
     ViewStack* tag_stack;
     Popup* popup;
@@ -249,15 +252,27 @@ static const char HELP[] =
     "2 seconds. Database\n"
     "files stay.\n";
 
+static const char ABOUT[] =
+    "Amiibo is a trademark\n"
+    "of Nintendo.\n"
+    "\n"
+    "Characters and names\n"
+    "are copyright Nintendo.\n"
+    "All rights reserved.\n"
+    "\n"
+    "This app is not made\n"
+    "by Nintendo.\n";
+
 typedef struct {
     uint16_t scroll;
     uint16_t lines;
     uint8_t visible;
-} HelpModel;
+    const char* title;
+    const char* body;
+} PageModel;
 
-static uint16_t help_line_count(void) {
+static uint16_t page_line_count(const char* text) {
     uint16_t count = 0;
-    const char* text = HELP;
     while(*text) {
         count++;
         while(*text && *text != '\n') text++;
@@ -266,8 +281,7 @@ static uint16_t help_line_count(void) {
     return count;
 }
 
-static void help_copy_line(uint16_t index, char* out, size_t out_size) {
-    const char* text = HELP;
+static void page_copy_line(const char* text, uint16_t index, char* out, size_t out_size) {
     uint16_t line = 0;
     while(*text && line < index) {
         if(*text == '\n') line++;
@@ -278,11 +292,11 @@ static void help_copy_line(uint16_t index, char* out, size_t out_size) {
     out[used] = '\0';
 }
 
-static void help_draw(Canvas* canvas, void* context) {
-    HelpModel* model = context;
+static void page_draw(Canvas* canvas, void* context) {
+    PageModel* model = context;
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 4, 11, "Help");
+    canvas_draw_str(canvas, 4, 11, model->title);
 
     canvas_set_font(canvas, FontSecondary);
     size_t font_height = canvas_current_font_height(canvas);
@@ -297,24 +311,41 @@ static void help_draw(Canvas* canvas, void* context) {
     for(uint8_t row = 0; row < visible; row++) {
         uint16_t index = model->scroll + row;
         if(index >= model->lines) break;
-        help_copy_line(index, line, sizeof(line));
+        page_copy_line(model->body, index, line, sizeof(line));
         canvas_draw_str(canvas, 4, (int32_t)(16 + ((row + 1) * font_height) - 2), line);
     }
     if(model->lines > visible) elements_scrollbar(canvas, model->scroll, model->lines);
 }
 
-static bool help_input(InputEvent* event, void* context) {
-    App* app = context;
+static bool page_input(InputEvent* event, View* view) {
     if(event->type != InputTypeShort && event->type != InputTypeRepeat) return false;
     if(event->key != InputKeyUp && event->key != InputKeyDown) return false;
 
-    HelpModel* model = view_get_model(app->help_view);
+    PageModel* model = view_get_model(view);
     uint8_t visible = model->visible ? model->visible : 4;
     uint16_t max_scroll = model->lines > visible ? model->lines - visible : 0;
     if(event->key == InputKeyDown && model->scroll < max_scroll) model->scroll++;
     if(event->key == InputKeyUp && model->scroll > 0) model->scroll--;
-    view_commit_model(app->help_view, true);
+    view_commit_model(view, true);
     return true;
+}
+
+static bool help_input(InputEvent* event, void* context) {
+    App* app = context;
+    return page_input(event, app->help_view);
+}
+
+static bool about_input(InputEvent* event, void* context) {
+    App* app = context;
+    return page_input(event, app->about_view);
+}
+
+static void show_about(App* app) {
+    PageModel* model = view_get_model(app->about_view);
+    model->scroll = 0;
+    view_commit_model(app->about_view, false);
+    app->current = ViewAbout;
+    view_dispatcher_switch_to_view(app->dispatcher, ViewAbout);
 }
 
 static void show_menu(App* app);
@@ -1013,6 +1044,8 @@ static void show_settings(App* app) {
     list_add(app, app->auto_uid ? "Auto UID: ON" : "Auto UID: OFF", 0, false, MenuAuto);
     list_add(app, app->keys_loaded ? "Keys: Loaded" : "Keys: Missing", 0, false, MenuKeys);
     list_add(app, "Clean added tags", 0, false, MenuClean);
+    // Text row only. Hang a carousel picture in menu_icons later if one is supplied.
+    list_add(app, "About", 0, false, MenuAbout);
     if(app->settings_index == 0) app->settings_index = MenuVersion;
     list_select(app, app->settings_index);
     app->current = ViewSettings;
@@ -2021,6 +2054,8 @@ static bool custom_event(void* context, uint32_t event) {
         show_settings(app);
     } else if(event == MenuClean) {
         show_cleanup(app);
+    } else if(event == MenuAbout) {
+        show_about(app);
     } else if(event == GuiButtonTypeLeft + 100) {
         if(app->uid_confirm) {
             app->uid_confirm = false;
@@ -2056,7 +2091,7 @@ static bool back_event(void* context) {
         show_tag(app);
         return true;
     }
-    if(app->current == ViewCleanup) {
+    if(app->current == ViewCleanup || app->current == ViewAbout) {
         show_settings(app);
         return true;
     }
@@ -2175,15 +2210,29 @@ int32_t flipper_amiibo_app(void* arg) {
     app->popup = popup_alloc();
     app->menu_timer = furi_timer_alloc(menu_timer_cb, FuriTimerTypePeriodic, app);
     app->help_view = view_alloc();
-    view_allocate_model(app->help_view, ViewModelTypeLocking, sizeof(HelpModel));
-    HelpModel* help_model = view_get_model(app->help_view);
+    view_allocate_model(app->help_view, ViewModelTypeLocking, sizeof(PageModel));
+    PageModel* help_model = view_get_model(app->help_view);
     help_model->scroll = 0;
-    help_model->lines = help_line_count();
+    help_model->title = "Help";
+    help_model->body = HELP;
+    help_model->lines = page_line_count(HELP);
     help_model->visible = 4;
     view_commit_model(app->help_view, false);
     view_set_context(app->help_view, app);
-    view_set_draw_callback(app->help_view, help_draw);
+    view_set_draw_callback(app->help_view, page_draw);
     view_set_input_callback(app->help_view, help_input);
+    app->about_view = view_alloc();
+    view_allocate_model(app->about_view, ViewModelTypeLocking, sizeof(PageModel));
+    PageModel* about_model = view_get_model(app->about_view);
+    about_model->scroll = 0;
+    about_model->title = "About";
+    about_model->body = ABOUT;
+    about_model->lines = page_line_count(ABOUT);
+    about_model->visible = 4;
+    view_commit_model(app->about_view, false);
+    view_set_context(app->about_view, app);
+    view_set_draw_callback(app->about_view, page_draw);
+    view_set_input_callback(app->about_view, about_input);
     app->input_pubsub = furi_record_open(RECORD_INPUT_EVENTS);
     app->input_subscription = furi_pubsub_subscribe(app->input_pubsub, section_key, app);
 
@@ -2199,6 +2248,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_dispatcher_add_view(app->dispatcher, ViewTag, view_stack_get_view(app->tag_stack));
     view_dispatcher_add_view(app->dispatcher, ViewNotice, popup_get_view(app->popup));
     view_dispatcher_add_view(app->dispatcher, ViewHelp, app->help_view);
+    view_dispatcher_add_view(app->dispatcher, ViewAbout, app->about_view);
 
     view_dispatcher_set_tick_event_callback(app->dispatcher, app_tick, furi_ms_to_ticks(50));
     show_splash(app);
@@ -2221,11 +2271,13 @@ int32_t flipper_amiibo_app(void* arg) {
     view_free(app->tag_buttons);
     view_dispatcher_remove_view(app->dispatcher, ViewNotice);
     view_dispatcher_remove_view(app->dispatcher, ViewHelp);
+    view_dispatcher_remove_view(app->dispatcher, ViewAbout);
     furi_timer_free(app->menu_timer);
     view_free(app->splash_view);
     view_free(app->cleanup_view);
     view_free(app->menu_view);
     view_free(app->help_view);
+    view_free(app->about_view);
     widget_free(app->widget);
     popup_free(app->popup);
     with_view_model(
