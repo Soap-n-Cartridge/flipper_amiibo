@@ -52,7 +52,6 @@ typedef enum {
     MenuAuto,
     MenuKeys,
     MenuClean,
-    MenuAbout,
     MenuEmpty,
 } MenuId;
 
@@ -1044,8 +1043,6 @@ static void show_settings(App* app) {
     list_add(app, app->auto_uid ? "Auto UID: ON" : "Auto UID: OFF", 0, false, MenuAuto);
     list_add(app, app->keys_loaded ? "Keys: Loaded" : "Keys: Missing", 0, false, MenuKeys);
     list_add(app, "Clean added tags", 0, false, MenuClean);
-    // Text row only. Hang a carousel picture in menu_icons later if one is supplied.
-    list_add(app, "About", 0, false, MenuAbout);
     if(app->settings_index == 0) app->settings_index = MenuVersion;
     list_select(app, app->settings_index);
     app->current = ViewSettings;
@@ -1614,9 +1611,11 @@ static void carousel_open(App* app) {
         show_scan(app);
     } else if(index == 3) {
         show_settings(app);
-    } else {
+    } else if(index == 4) {
         app->current = ViewHelp;
         view_dispatcher_switch_to_view(app->dispatcher, ViewHelp);
+    } else {
+        show_about(app);
     }
 }
 
@@ -1626,6 +1625,7 @@ static int section_of(App* app) {
     if(app->current == ViewMy) return 2;
     if(app->current == ViewSettings) return 3;
     if(app->current == ViewHelp) return 4;
+    if(app->current == ViewAbout) return 5;
     return -1;
 }
 
@@ -2054,8 +2054,6 @@ static bool custom_event(void* context, uint32_t event) {
         show_settings(app);
     } else if(event == MenuClean) {
         show_cleanup(app);
-    } else if(event == MenuAbout) {
-        show_about(app);
     } else if(event == GuiButtonTypeLeft + 100) {
         if(app->uid_confirm) {
             app->uid_confirm = false;
@@ -2091,7 +2089,7 @@ static bool back_event(void* context) {
         show_tag(app);
         return true;
     }
-    if(app->current == ViewCleanup || app->current == ViewAbout) {
+    if(app->current == ViewCleanup) {
         show_settings(app);
         return true;
     }
@@ -2107,7 +2105,8 @@ static bool back_event(void* context) {
         show_scan(app);
         return true;
     }
-    if(app->current == ViewMy || app->current == ViewSettings || app->current == ViewHelp) {
+    if(app->current == ViewMy || app->current == ViewSettings || app->current == ViewHelp ||
+       app->current == ViewAbout) {
         show_menu(app);
         return true;
     }
