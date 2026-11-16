@@ -260,7 +260,14 @@ static const char ABOUT[] =
     "All rights reserved.\n"
     "\n"
     "This app is not made\n"
-    "by Nintendo.\n";
+    "by Nintendo.\n"
+    "\n"
+    "Written by\n"
+    "Soap-n-Cartridge.\n"
+    "Open source.\n"
+    "\n"
+    "Does not own Amiibo\n"
+    "or Nintendo content.\n";
 
 typedef struct {
     uint16_t scroll;
