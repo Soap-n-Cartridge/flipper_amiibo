@@ -1,14 +1,16 @@
 # Amiibo Emulator
 
-This app utilizes a downloaded library of Amiibo files, and emulates them for use with compatible Nintendo games on systems, such as Switch / Switch 2, 3DS, and Wii. It also saves Amiibos you already own, so you can use them again later. The code was written with an AI coding assistant under my direction, and I tested it on my Flipper Zero (official firmware 1.5.1)
+Version 1.2.
 
-You do not need a downloaded list of Amiibos. You do not need a key file to save and play your own.
+This app saves Amiibos you already own, so you can use them again later on compatible Nintendo games, such as Switch / Switch 2, 3DS, and Wii. You do not need a downloaded list of Amiibos. You do not need a key file to save and play your own.
 
 1. Scan your real Amiibo.
 2. Save a copy in Favorites.
 3. Press Emulate and hold the Flipper on the game reader. The game sees that same Amiibo.
 
-The app cannot include Nintendo's key file, or the specific Amiibo files. You add those yourself. A new ID needs that key. Without it, New UID and Auto UID cannot change the ID. Emulate still works. It uses the ID from your Amiibo.
+A downloaded library is optional. The app cannot include Nintendo's key file, or the specific Amiibo files. You add those yourself. A new ID needs that key. Without it, New UID and Auto UID cannot change the ID. Emulate still works. It uses the ID from your Amiibo.
+
+The code was written with an AI coding assistant under my direction, and I tested it on my Flipper Zero (official firmware 1.5.1).
 
 Open Help in the app for the short steps on the Flipper.
 
@@ -21,7 +23,7 @@ The main menu is a row of pictures. Left and Right move. OK opens one. Back retu
 3. **Scan Amiibos** reads a real Amiibo.
 4. **Settings** shows the app version, Auto UID, whether the key file is ready, and whether Favorites and Scanned Amiibos are unsorted or grouped by series.
 5. **Help** explains the steps on the Flipper.
-6. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. The app is open source, written by Soap-n-Cartridge. It does not own Amiibo or Nintendo content.
+6. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. It also says the app is open source and written by Soap-n-Cartridge. The app does not own Amiibo or Nintendo content.
 
 From one of these screens, Left and Right jump to the next one.
 
@@ -43,7 +45,9 @@ Open a saved Amiibo. The buttons are New UID, Emulate, and Del. Saving a favorit
 
 ## Amiibo Database
 
-This list is optional. It is for Amiibo files you put on the SD card yourself. Folders come first, then files, A to Z. A .bin file is listed only at 520, 540, or 572 bytes. An .nfc file is listed only when its header looks like an NTAG215 Amiibo. Other NFC dumps are skipped. One folder shows at most 200 names and then says the list was shortened. Favorites and Scanned Amiibos use the same file check, show 40 names, and say so when more are there.
+This list is optional. It is for Amiibo files you put on the SD card yourself. You do not need it to use a scan or a favorite. Folders come first, then files, A to Z.
+
+A .bin file is listed only at 520, 540, or 572 bytes. An .nfc file is listed only when its header looks like an NTAG215 Amiibo. Other NFC dumps are skipped. One folder shows at most 200 names and then says the list was shortened. Favorites and Scanned Amiibos use the same file check, show 40 names, and say so when more are there.
 
 Open a file. The buttons are Fav, Emulate, and New UID.
 
@@ -57,10 +61,10 @@ A folder named ZE always tries to make a new ID. That needs the key file. A fold
 
 - **Auto UID**, when on, makes a new ID when you emulate a file from the database. Next ID makes another one on that screen. Both need the key file. A scan or a favorite keeps its own ID.
 - **Keys** says if the key file is ready. That line is only on this screen.
-- **Sort lists** is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. By Series makes a folder for each series that has Amiibos, with a count, using the series byte in the figure ID. Anything this app cannot name goes in Other. Unsorted keeps the flat list. The choice is saved.
-- **Delete Scanned Amiibos** removes only the scans. Hold Up for 2 seconds. The downloaded database stays.
-- **Delete Favorites** removes only Favorites. Hold Up for 2 seconds. The downloaded database stays.
-- **Delete All** removes scans and Favorites. It does not remove the downloaded database. Hold Up for 2 seconds.
+- **Sort lists** is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. Unsorted is the flat list, and it is the default the first time you open the app. By Series makes a folder for each series that has Amiibos, with a count, using the series byte in the figure ID. A series with nothing in it is hidden. Anything this app cannot name goes in Other. The choice stays after you close the app.
+- **Delete Scanned Amiibos** removes only the scans. The screen names what will be removed. Hold Up for 2 seconds. The downloaded library stays.
+- **Delete Favorites** removes only Favorites. The screen names what will be removed. Hold Up for 2 seconds. The downloaded library stays.
+- **Delete All** removes scans and Favorites. It does not remove the downloaded library. The screen says so. Hold Up for 2 seconds.
 
 ## The key file
 
