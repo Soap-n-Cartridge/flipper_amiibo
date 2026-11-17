@@ -1,5 +1,5 @@
 v1.2:
-Settings can delete scanned Amiibos, Favorites, or both. Each one asks you to hold Up and says the downloaded database stays. Deleting one Amiibo you have open still works.
+Settings can delete scanned Amiibos, Favorites, or both. Each one asks you to hold Up and says the downloaded database stays. Deleting one Amiibo you have open still works. Sort lists, above those deletes, is Unsorted or By Series for both Favorites and Scanned Amiibos. By Series groups them from the figure ID. A series with nothing in it is hidden. One this app cannot name is filed under Other. The choice stays after you leave the app.
 
 v1.1:
 Folder names show how many Amiibos are inside, including folders within them. A folder with none shows no number. Every number ends on the same right edge. The main menu has an About picture for the Nintendo trademark and copyright notice. About also says the app is open source and written by Soap-n-Cartridge. After a scan works, the app returns to the Scan menu so the next Amiibo can be scanned.

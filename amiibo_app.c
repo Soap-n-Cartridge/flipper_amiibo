@@ -51,6 +51,7 @@ typedef enum {
     MenuVersion,
     MenuAuto,
     MenuKeys,
+    MenuSort,
     MenuDeleteScanned,
     MenuDeleteFavorites,
     MenuDeleteAll,
@@ -114,6 +115,14 @@ typedef struct {
     bool loaded;
     bool dirty;
     bool auto_uid;
+    bool sort_series;
+    bool in_series;
+    bool in_other;
+    uint8_t open_series;
+    uint8_t series_ids[32];
+    uint8_t series_other[32];
+    uint8_t series_shown;
+    uint32_t series_index;
     bool keys_loaded;
     bool emulating;
     bool reading;
@@ -246,6 +255,11 @@ static const char HELP[] =
     "file. Next ID makes\n"
     "another one on that\n"
     "screen.\n"
+    "\n"
+    "Sort lists chooses\n"
+    "Unsorted or By Series\n"
+    "for Favorites and\n"
+    "Scanned Amiibos.\n"
     "\n"
     "Delete Scanned Amiibos\n"
     "removes scans only.\n"
@@ -466,10 +480,13 @@ static const char* policy_label(const App* app) {
 
 static void load_settings(App* app) {
     app->auto_uid = true;
+    app->sort_series = false;
     File* file = storage_file_alloc(app->storage);
     if(storage_file_open(file, APP_DATA_PATH("auto_uid"), FSAM_READ, FSOM_OPEN_EXISTING)) {
-        char value = '1';
-        if(storage_file_read(file, &value, 1) == 1) app->auto_uid = value != '0';
+        char value[2];
+        size_t read = storage_file_read(file, value, sizeof(value));
+        if(read >= 1) app->auto_uid = value[0] != '0';
+        if(read >= 2) app->sort_series = value[1] == '1';
         storage_file_close(file);
     }
     storage_file_free(file);
@@ -478,8 +495,10 @@ static void load_settings(App* app) {
 static void save_settings(App* app) {
     File* file = storage_file_alloc(app->storage);
     if(storage_file_open(file, APP_DATA_PATH("auto_uid"), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        char value = app->auto_uid ? '1' : '0';
-        storage_file_write(file, &value, 1);
+        char value[2];
+        value[0] = app->auto_uid ? '1' : '0';
+        value[1] = app->sort_series ? '1' : '0';
+        storage_file_write(file, value, sizeof(value));
         storage_file_close(file);
     }
     storage_file_free(file);
@@ -1055,6 +1074,12 @@ static void show_settings(App* app) {
     list_add(app, version, 0, false, MenuVersion);
     list_add(app, app->auto_uid ? "Auto UID: ON" : "Auto UID: OFF", 0, false, MenuAuto);
     list_add(app, app->keys_loaded ? "Keys: Loaded" : "Keys: Missing", 0, false, MenuKeys);
+    list_add(
+        app,
+        app->sort_series ? "Sort lists: By Series" : "Sort lists: Unsorted",
+        0,
+        false,
+        MenuSort);
     list_add(app, "Delete Scanned Amiibos", 0, false, MenuDeleteScanned);
     list_add(app, "Delete Favorites", 0, false, MenuDeleteFavorites);
     list_add(app, "Delete All", 0, false, MenuDeleteAll);
@@ -1505,43 +1530,192 @@ static void finish_read(App* app, bool ok) {
     show_scan(app);
 }
 
+static int hex_nibble(char c) {
+    if(c >= '0' && c <= '9') return c - '0';
+    if(c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if(c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Third byte on a Flipper "Page 22:" line. That byte is the figure-id series. */
+static bool third_page_byte(const char* text, const char* end, uint8_t* out) {
+    int hi = -1;
+    int got = 0;
+    for(; text < end && *text != '\n' && *text != '\r'; text++) {
+        int nibble = hex_nibble(*text);
+        if(nibble < 0) {
+            if(hi >= 0) return false;
+            continue;
+        }
+        if(hi < 0) {
+            hi = nibble;
+        } else {
+            uint8_t byte = (uint8_t)((hi << 4) | nibble);
+            hi = -1;
+            if(got == 2) {
+                *out = byte;
+                return true;
+            }
+            got++;
+        }
+    }
+    return false;
+}
+
+static bool series_from_bin(Storage* storage, const char* path, uint8_t* series) {
+    File* file = storage_file_alloc(storage);
+    bool ok = false;
+    if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        uint8_t id[8];
+        if(storage_file_seek(file, 0x54, true) &&
+           storage_file_read(file, id, sizeof(id)) == sizeof(id)) {
+            *series = id[6];
+            ok = true;
+        }
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+    return ok;
+}
+
+static bool series_from_nfc(Storage* storage, const char* path, uint8_t* series) {
+    File* file = storage_file_alloc(storage);
+    bool ok = false;
+    if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char* buf = malloc(8192);
+        if(buf) {
+            size_t n = storage_file_read(file, buf, 8192);
+            static const char mark[] = "Page 22:";
+            for(size_t i = 0; i + sizeof(mark) - 1 < n; i++) {
+                if(memcmp(buf + i, mark, sizeof(mark) - 1) == 0) {
+                    ok = third_page_byte(buf + i + sizeof(mark) - 1, buf + n, series);
+                    break;
+                }
+            }
+            free(buf);
+        }
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+    return ok;
+}
+
+static bool file_series(Storage* storage, const char* path, uint8_t* series) {
+    if(ends_with_i(path, ".bin")) return series_from_bin(storage, path, series);
+    if(ends_with_i(path, ".nfc")) return series_from_nfc(storage, path, series);
+    return false;
+}
+
+static void add_file_rows(App* app) {
+    if(app->file_count == 0) {
+        list_add(app, "None yet", 0, false, MenuEmpty);
+        return;
+    }
+    for(uint8_t i = 0; i < app->file_count; i++) {
+        FuriString* label = furi_string_alloc();
+        path_extract_filename(app->files[i], label, true);
+        list_add(app, furi_string_get_cstr(label), 0, false, MenuFileBase + i);
+        furi_string_free(label);
+    }
+}
+
 static void show_file_list(App* app, bool saved) {
+    if(!app->sort_series) app->in_series = false;
     const char* folder = saved ? APP_DATA_PATH("favorites") : APP_DATA_PATH("scanned");
     app->file_count = 0;
+    uint16_t counts[256];
+    memset(counts, 0, sizeof(counts));
+    uint16_t other = 0;
+    uint16_t total = 0;
+
     File* dir = storage_file_alloc(app->storage);
     if(storage_dir_open(dir, folder)) {
         FileInfo info;
         char name[128];
-        while(app->file_count < FILE_MAX &&
-              storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+        FuriString* path = furi_string_alloc();
+        while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
             if(info.flags & FSF_DIRECTORY) continue;
             if(!ends_with_i(name, ".bin") && !ends_with_i(name, ".nfc")) continue;
-            furi_string_printf(app->files[app->file_count], "%s/%s", folder, name);
-            app->file_count++;
+            if(!app->sort_series) {
+                if(app->file_count < FILE_MAX) {
+                    furi_string_printf(app->files[app->file_count], "%s/%s", folder, name);
+                    app->file_count++;
+                }
+                continue;
+            }
+            furi_string_printf(path, "%s/%s", folder, name);
+            total++;
+            uint8_t series = 0;
+            bool known = file_series(app->storage, furi_string_get_cstr(path), &series) &&
+                         amiibo_series_name(series) != NULL;
+            if(known) counts[series]++;
+            else other++;
+            if(app->in_series && app->file_count < FILE_MAX) {
+                bool take = app->in_other ? !known : (known && series == app->open_series);
+                if(take) {
+                    furi_string_set(app->files[app->file_count], path);
+                    app->file_count++;
+                }
+            }
         }
+        furi_string_free(path);
         storage_dir_close(dir);
     }
     storage_file_free(dir);
 
     list_reset(app);
-    list_header(
-        app,
-        saved ? "Favorites" : "Scanned Amiibos",
-        count_tags_in(app, folder),
-        true);
-    if(app->file_count == 0) {
-        list_add(app, "None yet", 0, false, MenuEmpty);
-    } else {
-        for(uint8_t i = 0; i < app->file_count; i++) {
-            FuriString* label = furi_string_alloc();
-            path_extract_filename(app->files[i], label, true);
-            list_add(app, furi_string_get_cstr(label), 0, false, MenuFileBase + i);
-            furi_string_free(label);
+    if(app->sort_series && !app->in_series) {
+        list_header(app, saved ? "Favorites" : "Scanned Amiibos", total, true);
+        app->series_shown = 0;
+        for(size_t i = 0; i < amiibo_series_count() && app->series_shown < 32; i++) {
+            uint8_t id = 0;
+            const char* label = amiibo_series_at(i, &id);
+            if(!label || counts[id] == 0) continue;
+            FuriString* row = furi_string_alloc_printf("%s/", label);
+            app->series_ids[app->series_shown] = id;
+            app->series_other[app->series_shown] = 0;
+            list_add(
+                app,
+                furi_string_get_cstr(row),
+                counts[id],
+                true,
+                MenuFileBase + app->series_shown);
+            furi_string_free(row);
+            app->series_shown++;
         }
+        if(other > 0 && app->series_shown < 32) {
+            app->series_ids[app->series_shown] = 0;
+            app->series_other[app->series_shown] = 1;
+            list_add(app, "Other/", other, true, MenuFileBase + app->series_shown);
+            app->series_shown++;
+        }
+        if(app->series_shown == 0) {
+            list_add(app, "None yet", 0, false, MenuEmpty);
+            list_select(app, MenuEmpty);
+        } else {
+            list_select(app, app->series_index);
+        }
+    } else if(app->sort_series) {
+        const char* title = "Other";
+        uint16_t header_count = other;
+        if(!app->in_other) {
+            const char* name = amiibo_series_name(app->open_series);
+            if(name) title = name;
+            header_count = counts[app->open_series];
+        }
+        list_header(app, title, header_count, true);
+        add_file_rows(app);
+        uint32_t selected = saved ? app->saved_index : app->unsaved_index;
+        if(app->file_count == 0) selected = MenuEmpty;
+        list_select(app, selected);
+    } else {
+        list_header(
+            app, saved ? "Favorites" : "Scanned Amiibos", count_tags_in(app, folder), true);
+        add_file_rows(app);
+        uint32_t selected = saved ? app->saved_index : app->unsaved_index;
+        if(app->file_count == 0) selected = MenuEmpty;
+        list_select(app, selected);
     }
-    uint32_t selected = saved ? app->saved_index : app->unsaved_index;
-    if(app->file_count == 0) selected = MenuEmpty;
-    list_select(app, selected);
     app->current = saved ? ViewSaved : ViewUnsaved;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
 }
@@ -1560,8 +1734,27 @@ static bool load_listed_file(App* app, uint8_t index, bool saved) {
     return true;
 }
 
+static void open_series_row(App* app, uint8_t index) {
+    bool saved = app->current == ViewSaved;
+    if(index >= app->series_shown) {
+        show_file_list(app, saved);
+        return;
+    }
+    app->series_index = MenuFileBase + index;
+    app->in_series = true;
+    app->in_other = app->series_other[index] != 0;
+    app->open_series = app->series_ids[index];
+    if(saved) app->saved_index = MenuFileBase;
+    else app->unsaved_index = MenuFileBase;
+    show_file_list(app, saved);
+}
+
 static void open_listed(App* app, uint8_t index) {
     bool saved = app->current == ViewSaved;
+    if(app->sort_series && !app->in_series) {
+        open_series_row(app, index);
+        return;
+    }
     if(!load_listed_file(app, index, saved)) show_file_list(app, saved);
 }
 
@@ -1688,6 +1881,7 @@ static void carousel_open(App* app) {
     if(index == 0) {
         show_database(app);
     } else if(index == 1) {
+        app->in_series = false;
         show_file_list(app, true);
     } else if(index == 2) {
         show_scan(app);
@@ -2113,9 +2307,14 @@ static bool custom_event(void* context, uint32_t event) {
     }
     if(event == MenuEmpty) {
         if(app->current == ViewDatabase) db_up(app);
-        else if(app->current == ViewSaved) show_menu(app);
+        else if(app->sort_series && app->in_series &&
+                (app->current == ViewSaved || app->current == ViewUnsaved)) {
+            app->in_series = false;
+            show_file_list(app, app->current == ViewSaved);
+        } else if(app->current == ViewSaved) show_menu(app);
         else show_scan(app);
     } else if(event == MenuUnsaved) {
+        app->in_series = false;
         show_file_list(app, false);
     } else if(event == MenuRead) {
         start_read(app);
@@ -2125,6 +2324,11 @@ static bool custom_event(void* context, uint32_t event) {
         show_settings(app);
     } else if(event == MenuAuto) {
         app->auto_uid = !app->auto_uid;
+        save_settings(app);
+        show_settings(app);
+    } else if(event == MenuSort) {
+        app->sort_series = !app->sort_series;
+        app->in_series = false;
         save_settings(app);
         show_settings(app);
     } else if(event == MenuKeys) {
@@ -2184,11 +2388,21 @@ static bool back_event(void* context) {
         return true;
     }
     if(app->current == ViewSaved) {
-        show_menu(app);
+        if(app->sort_series && app->in_series) {
+            app->in_series = false;
+            show_file_list(app, true);
+        } else {
+            show_menu(app);
+        }
         return true;
     }
     if(app->current == ViewUnsaved) {
-        show_scan(app);
+        if(app->sort_series && app->in_series) {
+            app->in_series = false;
+            show_file_list(app, false);
+        } else {
+            show_scan(app);
+        }
         return true;
     }
     if(app->current == ViewMy || app->current == ViewSettings || app->current == ViewHelp ||

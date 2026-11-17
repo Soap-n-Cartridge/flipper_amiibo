@@ -19,7 +19,7 @@ The main menu is a row of pictures. Left and Right move. OK opens one. Back retu
 1. **Amiibo Database** is for Amiibo files you add yourself. You do not need this to use your own scans.
 2. **Favorites** keeps copies of Amiibos you want to use again.
 3. **Scan Amiibos** reads a real Amiibo.
-4. **Settings** shows the app version, Auto UID, and whether the key file is ready.
+4. **Settings** shows the app version, Auto UID, whether the key file is ready, and whether Favorites and Scanned Amiibos are unsorted or grouped by series.
 5. **Help** explains the steps on the Flipper.
 6. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. The app is open source, written by Soap-n-Cartridge. It does not own Amiibo or Nintendo content.
 
@@ -57,6 +57,7 @@ A folder named ZE always tries to make a new ID. That needs the key file. A fold
 
 - **Auto UID**, when on, makes a new ID when you emulate a file from the database. Next ID makes another one on that screen. Both need the key file. A scan or a favorite keeps its own ID.
 - **Keys** says if the key file is ready. That line is only on this screen.
+- **Sort lists** is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. By Series makes a folder for each series that has Amiibos, with a count, using the series byte in the figure ID. Anything this app cannot name goes in Other. Unsorted keeps the flat list. The choice is saved.
 - **Delete Scanned Amiibos** removes only the scans. Hold Up for 2 seconds. The downloaded database stays.
 - **Delete Favorites** removes only Favorites. Hold Up for 2 seconds. The downloaded database stays.
 - **Delete All** removes scans and Favorites. It does not remove the downloaded database. Hold Up for 2 seconds.
