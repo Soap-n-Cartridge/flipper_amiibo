@@ -57,7 +57,9 @@ A folder named ZE always tries to make a new ID. That needs the key file. A fold
 
 - **Auto UID**, when on, makes a new ID when you emulate a file from the database. Next ID makes another one on that screen. Both need the key file. A scan or a favorite keeps its own ID.
 - **Keys** says if the key file is ready. That line is only on this screen.
-- **Clean added tags** removes Favorites and scans. Hold Up for 2 seconds. Files in the database stay.
+- **Delete Scanned Amiibos** removes only the scans. Hold Up for 2 seconds. The downloaded database stays.
+- **Delete Favorites** removes only Favorites. Hold Up for 2 seconds. The downloaded database stays.
+- **Delete All** removes scans and Favorites. It does not remove the downloaded database. Hold Up for 2 seconds.
 
 ## The key file
 

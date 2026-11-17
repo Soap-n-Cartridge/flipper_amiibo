@@ -51,14 +51,16 @@ typedef enum {
     MenuVersion,
     MenuAuto,
     MenuKeys,
-    MenuClean,
+    MenuDeleteScanned,
+    MenuDeleteFavorites,
+    MenuDeleteAll,
     MenuEmpty,
 } MenuId;
 
 #define FILE_MAX 40
 #define MenuFileBase 400
 
-#define APP_VERSION "1.1"
+#define APP_VERSION "1.2"
 
 typedef enum {
     UidFollowSetting,
@@ -245,11 +247,15 @@ static const char HELP[] =
     "another one on that\n"
     "screen.\n"
     "\n"
-    "Clean added tags\n"
-    "removes Favorites and\n"
-    "scans. Hold Up for\n"
-    "2 seconds. Database\n"
-    "files stay.\n";
+    "Delete Scanned Amiibos\n"
+    "removes scans only.\n"
+    "Delete Favorites\n"
+    "removes favorites only.\n"
+    "Delete All removes\n"
+    "both. Hold Up for\n"
+    "2 seconds. The\n"
+    "downloaded database\n"
+    "stays.\n";
 
 static const char ABOUT[] =
     "Amiibo is a trademark\n"
@@ -1049,40 +1055,95 @@ static void show_settings(App* app) {
     list_add(app, version, 0, false, MenuVersion);
     list_add(app, app->auto_uid ? "Auto UID: ON" : "Auto UID: OFF", 0, false, MenuAuto);
     list_add(app, app->keys_loaded ? "Keys: Loaded" : "Keys: Missing", 0, false, MenuKeys);
-    list_add(app, "Clean added tags", 0, false, MenuClean);
+    list_add(app, "Delete Scanned Amiibos", 0, false, MenuDeleteScanned);
+    list_add(app, "Delete Favorites", 0, false, MenuDeleteFavorites);
+    list_add(app, "Delete All", 0, false, MenuDeleteAll);
     if(app->settings_index == 0) app->settings_index = MenuVersion;
     list_select(app, app->settings_index);
     app->current = ViewSettings;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
 }
 
-static void erase_added_tags(App* app) {
-    storage_simply_remove_recursive(app->storage, APP_DATA_PATH("favorites"));
-    storage_simply_remove_recursive(app->storage, APP_DATA_PATH("scanned"));
-    storage_simply_remove_recursive(app->storage, APP_DATA_PATH("saved"));
-    storage_simply_remove_recursive(app->storage, APP_DATA_PATH("unsaved"));
-    storage_simply_mkdir(app->storage, APP_DATA_PATH("favorites"));
-    storage_simply_mkdir(app->storage, APP_DATA_PATH("scanned"));
+typedef enum {
+    CleanupScanned,
+    CleanupFavorites,
+    CleanupAll,
+} CleanupKind;
+
+static bool path_in_folder(const App* app, const char* folder) {
+    const char* path = furi_string_get_cstr(app->path);
+    size_t length = strlen(folder);
+    if(strncmp(path, folder, length) != 0) return false;
+    return path[length] == '/' || path[length] == '\0';
+}
+
+static void forget_if_deleted(App* app, bool scanned, bool favorites) {
+    bool drop = false;
+    if(scanned) {
+        drop = drop || path_in_folder(app, APP_DATA_PATH("scanned"));
+        drop = drop || path_in_folder(app, APP_DATA_PATH("unsaved"));
+    }
+    if(favorites) {
+        drop = drop || path_in_folder(app, APP_DATA_PATH("favorites"));
+        drop = drop || path_in_folder(app, APP_DATA_PATH("saved"));
+    }
+    if(!drop) return;
     app->loaded = false;
     app->dirty = false;
     app->file_count = 0;
 }
 
+static void erase_folder(App* app, const char* folder) {
+    storage_simply_remove_recursive(app->storage, folder);
+    storage_simply_mkdir(app->storage, folder);
+}
+
+static void erase_scanned(App* app) {
+    erase_folder(app, APP_DATA_PATH("scanned"));
+    storage_simply_remove_recursive(app->storage, APP_DATA_PATH("unsaved"));
+    forget_if_deleted(app, true, false);
+}
+
+static void erase_favorites(App* app) {
+    erase_folder(app, APP_DATA_PATH("favorites"));
+    storage_simply_remove_recursive(app->storage, APP_DATA_PATH("saved"));
+    forget_if_deleted(app, false, true);
+}
+
+static void erase_added_tags(App* app) {
+    erase_scanned(app);
+    erase_favorites(app);
+}
+
 typedef struct {
     uint8_t filled;
+    uint8_t kind;
 } CleanupModel;
 
 static void cleanup_draw(Canvas* canvas, void* context) {
     const CleanupModel* model = context;
+    const char* title = "Delete all added?";
+    const char* what = "Scans and Favorites.";
+    if(model->kind == CleanupScanned) {
+        title = "Delete scans?";
+        what = "Scanned Amiibos only.";
+    } else if(model->kind == CleanupFavorites) {
+        title = "Delete favorites?";
+        what = "Favorites only.";
+    }
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, 64, 0, AlignCenter, AlignTop, "Erase added tags?");
+    canvas_draw_str_aligned(canvas, 64, 0, AlignCenter, AlignTop, title);
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str_aligned(canvas, 64, 18, AlignCenter, AlignTop, "Favorites and scans.");
-    canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignTop, "Database files stay.");
-    canvas_draw_str_aligned(canvas, 64, 44, AlignCenter, AlignTop, "Hold Up 2 seconds");
-    canvas_draw_frame(canvas, 8, 56, 112, 6);
-    if(model->filled > 0) canvas_draw_box(canvas, 8, 56, model->filled, 6);
+    canvas_draw_str_aligned(canvas, 64, 14, AlignCenter, AlignTop, what);
+    canvas_draw_str_aligned(canvas, 64, 26, AlignCenter, AlignTop, "Downloaded database");
+    canvas_draw_str_aligned(canvas, 64, 36, AlignCenter, AlignTop, "on the SD card stays.");
+    canvas_draw_str_aligned(canvas, 64, 46, AlignCenter, AlignTop, "Hold Up 2 seconds");
+    canvas_draw_frame(canvas, 8, 58, 112, 5);
+    if(model->filled > 0) {
+        uint8_t width = model->filled > 112 ? 112 : model->filled;
+        canvas_draw_box(canvas, 8, 58, width, 5);
+    }
 }
 
 static void cleanup_reset_bar(App* app) {
@@ -1126,16 +1187,30 @@ static void cleanup_hold_tick(App* app) {
     }
     bool changed = model->filled != filled;
     model->filled = filled;
+    uint8_t kind = model->kind;
     view_commit_model(app->cleanup_view, changed);
     if(!erase) return;
-    erase_added_tags(app);
-    app_alert(app, "Cleaned", "Favorites and scans\nare gone.\nDatabase files stay.");
+    const char* header = "Deleted";
+    const char* text = "Scans and Favorites\nare gone.\nDownloaded database\nstays.";
+    if(kind == CleanupScanned) {
+        erase_scanned(app);
+        text = "Scanned Amiibos\nare gone.\nDownloaded database\nstays.";
+    } else if(kind == CleanupFavorites) {
+        erase_favorites(app);
+        text = "Favorites\nare gone.\nDownloaded database\nstays.";
+    } else {
+        erase_added_tags(app);
+    }
+    app_alert(app, header, text);
     show_settings(app);
 }
 
-static void show_cleanup(App* app) {
+static void show_cleanup(App* app, CleanupKind kind) {
     app->cleanup_holding = false;
-    cleanup_reset_bar(app);
+    CleanupModel* model = view_get_model(app->cleanup_view);
+    model->kind = (uint8_t)kind;
+    model->filled = 0;
+    view_commit_model(app->cleanup_view, true);
     app->current = ViewCleanup;
     view_dispatcher_switch_to_view(app->dispatcher, ViewCleanup);
 }
@@ -2059,8 +2134,12 @@ static bool custom_event(void* context, uint32_t event) {
             app_alert(app, "Keys missing", "Put key_retail.bin\nin apps_data/\nflipper_amiibo");
         }
         show_settings(app);
-    } else if(event == MenuClean) {
-        show_cleanup(app);
+    } else if(event == MenuDeleteScanned) {
+        show_cleanup(app, CleanupScanned);
+    } else if(event == MenuDeleteFavorites) {
+        show_cleanup(app, CleanupFavorites);
+    } else if(event == MenuDeleteAll) {
+        show_cleanup(app, CleanupAll);
     } else if(event == GuiButtonTypeLeft + 100) {
         if(app->uid_confirm) {
             app->uid_confirm = false;
