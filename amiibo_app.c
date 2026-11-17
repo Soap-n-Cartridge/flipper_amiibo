@@ -59,6 +59,10 @@ typedef enum {
 } MenuId;
 
 #define FILE_MAX 40
+/* One database folder keeps this many names. Each name is stored twice (the
+ * folder list and the on-screen row), and a few hundred of those can exhaust
+ * the heap. Favorites and Scanned stay at FILE_MAX. */
+#define DIR_LIST_MAX 200
 #define MenuFileBase 400
 
 #define APP_VERSION "1.2"
@@ -116,6 +120,9 @@ typedef struct {
     bool dirty;
     bool auto_uid;
     bool sort_series;
+    bool list_cut;
+    bool cut_notice;
+    ViewId notice_return;
     bool in_series;
     bool in_other;
     uint8_t open_series;
@@ -235,6 +242,14 @@ static const char HELP[] =
     "Folders are listed\n"
     "first, then files,\n"
     "A to Z.\n"
+    "\n"
+    "Only Amiibo .bin and\n"
+    "NTAG215 .nfc files\n"
+    "are listed. A long\n"
+    "folder shows the first\n"
+    "200 and says so.\n"
+    "Favorites and scans\n"
+    "show the first 40.\n"
     "\n"
     "A folder named ZE\n"
     "always makes a new ID.\n"
@@ -1015,6 +1030,51 @@ static void list_select(App* app, uint32_t index) {
         true);
 }
 
+static bool bin_size_ok(uint64_t size) {
+    return size == 520 || size == 540 || size == 572;
+}
+
+/* Flipper NFC text, not a full parse. Amiibo dumps are NTAG215: 135 pages. */
+static bool nfc_header_is_amiibo(Storage* storage, const char* path) {
+    File* file = storage_file_alloc(storage);
+    bool ok = false;
+    if(storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        char* buf = malloc(768);
+        if(buf) {
+            size_t n = storage_file_read(file, buf, 767);
+            buf[n] = '\0';
+            const char* pages = strstr(buf, "Pages total:");
+            if(pages) {
+                pages += strlen("Pages total:");
+                while(*pages == ' ' || *pages == '\t') pages++;
+                unsigned total = 0;
+                bool digits = false;
+                while(*pages >= '0' && *pages <= '9') {
+                    digits = true;
+                    total = total * 10u + (unsigned)(*pages - '0');
+                    if(total > 1000u) break;
+                    pages++;
+                }
+                bool ultralight = strstr(buf, "NTAG215") != NULL || strstr(buf, "Ultralight") != NULL;
+                ok = digits && total == 135 && ultralight;
+            } else if(strstr(buf, "NTAG215") != NULL) {
+                ok = true;
+            }
+            free(buf);
+        }
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+    return ok;
+}
+
+static bool dump_ok(Storage* storage, const char* path, const char* name, const FileInfo* info) {
+    if(name[0] == '\0' || name[0] == '.') return false;
+    if(ends_with_i(name, ".bin")) return bin_size_ok(info->size);
+    if(ends_with_i(name, ".nfc")) return nfc_header_is_amiibo(storage, path);
+    return false;
+}
+
 static unsigned count_tags_in(App* app, const char* folder) {
     unsigned count = 0;
     FuriString** subs = NULL;
@@ -1036,7 +1096,9 @@ static unsigned count_tags_in(App* app, const char* folder) {
                 }
                 subs[sub_count++] = furi_string_alloc_printf("%s/%s", folder, name);
             } else if(ends_with_i(name, ".bin") || ends_with_i(name, ".nfc")) {
-                count++;
+                FuriString* path = furi_string_alloc_printf("%s/%s", folder, name);
+                if(dump_ok(app->storage, furi_string_get_cstr(path), name, &info)) count++;
+                furi_string_free(path);
             }
         }
         storage_dir_close(dir);
@@ -1619,8 +1681,11 @@ static void add_file_rows(App* app) {
     }
 }
 
+static void show_cut_notice(App* app, unsigned shown);
+
 static void show_file_list(App* app, bool saved) {
     if(!app->sort_series) app->in_series = false;
+    app->list_cut = false;
     const char* folder = saved ? APP_DATA_PATH("favorites") : APP_DATA_PATH("scanned");
     app->file_count = 0;
     uint16_t counts[256];
@@ -1636,25 +1701,33 @@ static void show_file_list(App* app, bool saved) {
         while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
             if(info.flags & FSF_DIRECTORY) continue;
             if(!ends_with_i(name, ".bin") && !ends_with_i(name, ".nfc")) continue;
+            furi_string_printf(path, "%s/%s", folder, name);
+            if(!dump_ok(app->storage, furi_string_get_cstr(path), name, &info)) continue;
             if(!app->sort_series) {
                 if(app->file_count < FILE_MAX) {
-                    furi_string_printf(app->files[app->file_count], "%s/%s", folder, name);
+                    furi_string_set(app->files[app->file_count], path);
                     app->file_count++;
+                } else {
+                    app->list_cut = true;
+                    break;
                 }
                 continue;
             }
-            furi_string_printf(path, "%s/%s", folder, name);
             total++;
             uint8_t series = 0;
             bool known = file_series(app->storage, furi_string_get_cstr(path), &series) &&
                          amiibo_series_name(series) != NULL;
             if(known) counts[series]++;
             else other++;
-            if(app->in_series && app->file_count < FILE_MAX) {
+            if(app->in_series) {
                 bool take = app->in_other ? !known : (known && series == app->open_series);
                 if(take) {
-                    furi_string_set(app->files[app->file_count], path);
-                    app->file_count++;
+                    if(app->file_count < FILE_MAX) {
+                        furi_string_set(app->files[app->file_count], path);
+                        app->file_count++;
+                    } else {
+                        app->list_cut = true;
+                    }
                 }
             }
         }
@@ -1718,6 +1791,7 @@ static void show_file_list(App* app, bool saved) {
     }
     app->current = saved ? ViewSaved : ViewUnsaved;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
+    if(app->list_cut) show_cut_notice(app, FILE_MAX);
 }
 
 static bool load_listed_file(App* app, uint8_t index, bool saved) {
@@ -1809,7 +1883,24 @@ static void fav_notice_done(void* context) {
     view_dispatcher_send_custom_event(app->dispatcher, EventFavNoted);
 }
 
+static void show_cut_notice(App* app, unsigned shown) {
+    char line[24];
+    snprintf(line, sizeof(line), "First %u shown", shown);
+    app->notice_return = app->current;
+    app->cut_notice = true;
+    popup_reset(app->popup);
+    popup_set_callback(app->popup, fav_notice_done);
+    popup_set_context(app->popup, app);
+    popup_set_header(app->popup, "List shortened", 64, 16, AlignCenter, AlignCenter);
+    popup_set_text(app->popup, line, 64, 36, AlignCenter, AlignCenter);
+    popup_set_timeout(app->popup, 1500);
+    popup_enable_timeout(app->popup);
+    app->current = ViewNotice;
+    view_dispatcher_switch_to_view(app->dispatcher, ViewNotice);
+}
+
 static void show_fav_notice(App* app) {
+    app->cut_notice = false;
     popup_reset(app->popup);
     popup_set_callback(app->popup, fav_notice_done);
     popup_set_context(app->popup, app);
@@ -2058,6 +2149,7 @@ static bool db_is_root(const App* app) {
 
 static void db_load(App* app) {
     db_clear(app);
+    app->list_cut = false;
     File* dir = storage_file_alloc(app->storage);
     bool opened = storage_dir_open(dir, furi_string_get_cstr(app->db_path));
     if(!opened && !db_is_root(app)) {
@@ -2073,8 +2165,18 @@ static void db_load(App* app) {
         while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
             if(name[0] == '\0' || name[0] == '.') continue;
             bool is_dir = (info.flags & FSF_DIRECTORY) != 0;
-            if(!is_dir && !ends_with_i(name, ".bin") && !ends_with_i(name, ".nfc")) continue;
-            if(!db_push(app, name, is_dir)) break;
+            if(!is_dir) {
+                if(!ends_with_i(name, ".bin") && !ends_with_i(name, ".nfc")) continue;
+                FuriString* path = furi_string_alloc_printf(
+                    "%s/%s", furi_string_get_cstr(app->db_path), name);
+                bool ok = dump_ok(app->storage, furi_string_get_cstr(path), name, &info);
+                furi_string_free(path);
+                if(!ok) continue;
+            }
+            if(app->db_count >= DIR_LIST_MAX || !db_push(app, name, is_dir)) {
+                app->list_cut = true;
+                break;
+            }
         }
         storage_dir_close(dir);
     }
@@ -2121,6 +2223,7 @@ static void show_database(App* app) {
     list_select(app, app->db_count == 0 ? MenuEmpty : MenuFileBase + app->db_index);
     app->current = ViewDatabase;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
+    if(app->list_cut) show_cut_notice(app, DIR_LIST_MAX);
 }
 
 static void db_up(App* app) {
@@ -2269,7 +2372,13 @@ static bool custom_event(void* context, uint32_t event) {
         return true;
     }
     if(event == EventFavNoted) {
-        if(app->current == ViewNotice) show_tag(app);
+        if(app->cut_notice) {
+            app->cut_notice = false;
+            app->current = app->notice_return;
+            view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
+        } else if(app->current == ViewNotice) {
+            show_tag(app);
+        }
         return true;
     }
     if(event == EventTagPrev || event == EventTagNext) {
@@ -2410,7 +2519,17 @@ static bool back_event(void* context) {
         show_menu(app);
         return true;
     }
-    if(app->uid_confirm || app->current == ViewNotice) {
+    if(app->current == ViewNotice) {
+        if(app->cut_notice) {
+            app->cut_notice = false;
+            app->current = app->notice_return;
+            view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
+        } else {
+            show_tag(app);
+        }
+        return true;
+    }
+    if(app->uid_confirm) {
         show_tag(app);
         return true;
     }
