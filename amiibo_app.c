@@ -192,7 +192,7 @@ static const char HELP[] =
     "your Favorites. Blast\n"
     "sends a new ID for\n"
     "1 second, pauses\n"
-    "3 seconds, and repeats.\n"
+    "2 seconds, and repeats.\n"
     "It does not save that\n"
     "ID. Any key stops.\n"
     "This needs the key\n"
@@ -1559,7 +1559,7 @@ typedef struct {
 #define SPLASH_FRAME_MS 120
 #define SPLASH_HOLD_MS 2000
 #define BLAST_SEND_MS 1000
-#define BLAST_PAUSE_MS 3000
+#define BLAST_PAUSE_MS 2000
 
 static void blast_restore(App* app) {
     memcpy(app->tag, app->blast_saved, AMIIBO_TAG_SIZE);

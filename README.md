@@ -23,7 +23,7 @@ The main menu is a row of pictures. Left and Right move. OK opens one. Back retu
 1. **Amiibo Database** is for Amiibo files you add yourself. You do not need this to use your own scans.
 2. **Favorites** keeps copies of Amiibos you want to use again.
 3. **Scan Amiibos** reads a real Amiibo.
-4. **Amiibo Blast** lists the same Amiibos as Favorites. Blast sends a new ID for 1 second, pauses 3 seconds, and repeats. It does not save that ID. Any key stops.
+4. **Amiibo Blast** lists the same Amiibos as Favorites. Blast sends a new ID for 1 second, pauses 2 seconds, and repeats. It does not save that ID. Any key stops.
 5. **Settings** shows the app version, Auto UID, whether the key file is ready, and whether Favorites and Scanned Amiibos are unsorted or grouped by series.
 6. **Help** explains the steps on the Flipper.
 7. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. It also says the app is open source and written by Soap-n-Cartridge. The app does not own Amiibo or Nintendo content.
