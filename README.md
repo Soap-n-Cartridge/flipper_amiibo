@@ -2,6 +2,8 @@
 
 Version 1.2.
 
+This app is similar to the devices that are selling online for $30-50, except this is even better! Whether you want to backup your Amiibo collection and use them on the go, or download a complete set of Amiibos (use Google to find them), this app will ocme in handy! You can then generate random identifiers, so games like Ocarina of Time will allow unlimited loot drops. The "Amiibo Blast" option gives you a new Amiibo identifier sent to your game every couple seconds until you stop it. Then on your game controller, just activate the Amiibo option over and over, and watch the bombs, rupeess, arrows, etc rain down around you!
+
 This app saves Amiibos you already own, so you can use them again later on compatible Nintendo games, such as Switch / Switch 2, 3DS, and Wii. You do not need a downloaded list of Amiibos. You do not need a key file to save and play your own.
 
 1. Scan your real Amiibo.
@@ -21,7 +23,7 @@ The main menu is a row of pictures. Left and Right move. OK opens one. Back retu
 1. **Amiibo Database** is for Amiibo files you add yourself. You do not need this to use your own scans.
 2. **Favorites** keeps copies of Amiibos you want to use again.
 3. **Scan Amiibos** reads a real Amiibo.
-4. **Amiibo Blast** lists the same Amiibos as Favorites. Blast sends a new ID for 2 seconds, pauses 2 seconds, and repeats. It does not save that ID. Any key stops. This needs the key file.
+4. **Amiibo Blast** lists the same Amiibos as Favorites. Blast sends a new ID, pauses, and repeats. Send and pause use the interval in Settings. It does not save that ID. Any key stops.
 5. **Settings** shows the app version, Auto UID, whether the key file is ready, and whether Favorites and Scanned Amiibos are unsorted or grouped by series.
 6. **Help** explains the steps on the Flipper.
 7. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. It also says the app is open source and written by Soap-n-Cartridge. The app does not own Amiibo or Nintendo content.
@@ -41,7 +43,7 @@ If a scan does not work, press OK to try again. Back returns to the Scan menu.
 Open a saved Amiibo. The buttons are New UID, Emulate, and Del. Saving a favorite Amiibo is particularly useful for LoZ:OOT 40th, where the fifth daily scan of your Amiibo gives you a bonus scan. In order to reach this requirement, the UID of the Amiibo tag must not change.
 
 - **Emulate** plays that Amiibo. Hold the Flipper on the game reader.
-- **New UID** asks first. Press it again to make a new ID. Back cancels. The new ID is saved on that favorite. This needs the key file.
+- **New UID** asks first. Press it again to make a new ID. Back cancels. The new ID is saved on that favorite.
 - **Del** asks before it removes the Amiibo. Cancel or Back keeps it.
 
 ## Amiibo Database
@@ -63,6 +65,7 @@ A folder named ZE always tries to make a new ID. That needs the key file. A fold
 - **Auto UID**, when on, makes a new ID when you emulate a file from the database. Next ID makes another one on that screen. Both need the key file. A scan or a favorite keeps its own ID.
 - **Keys** says if the key file is ready. That line is only on this screen.
 - **Sort lists** is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. Unsorted is the flat list, and it is the default the first time you open the app. By Series makes a folder for each series that has Amiibos, with a count, using the series byte in the figure ID. A series with nothing in it is hidden. Anything this app cannot name goes in Other. The choice stays after you close the app.
+- **Blast interval** is how long Amiibo Blast sends and how long it pauses. Tap to move from 1 second to 5 seconds. It starts at 2 seconds. The choice stays after you close the app.
 - **Delete Scanned Amiibos** removes only the scans. The screen names what will be removed. Hold Up for 2 seconds. The downloaded library stays.
 - **Delete Favorites** removes only Favorites. The screen names what will be removed. Hold Up for 2 seconds. The downloaded library stays.
 
