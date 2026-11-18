@@ -1518,17 +1518,22 @@ typedef struct {
     uint8_t frame;
 } SplashModel;
 
-#define SPLASH_FRAME_MS 100
+#define SPLASH_FRAME_MS 200
+#define SPLASH_HOLD_MS 500
 
 static void app_tick(void* context) {
     App* app = context;
     if(app->current == ViewCleanup) cleanup_hold_tick(app);
     if(app->current != ViewSplash) return;
-    uint32_t frame = (furi_get_tick() - app->splash_started) / furi_ms_to_ticks(SPLASH_FRAME_MS);
-    if(frame >= SPLASH_FRAME_COUNT) {
+    uint32_t frame_ticks = furi_ms_to_ticks(SPLASH_FRAME_MS);
+    uint32_t elapsed = furi_get_tick() - app->splash_started;
+    uint32_t done = frame_ticks * SPLASH_FRAME_COUNT + furi_ms_to_ticks(SPLASH_HOLD_MS);
+    if(elapsed >= done) {
         show_menu(app);
         return;
     }
+    uint32_t frame = elapsed / frame_ticks;
+    if(frame >= SPLASH_FRAME_COUNT) frame = SPLASH_FRAME_COUNT - 1;
     SplashModel* model = view_get_model(app->splash_view);
     bool changed = model->frame != (uint8_t)frame;
     model->frame = (uint8_t)frame;
