@@ -48,7 +48,6 @@ typedef enum {
 typedef enum {
     MenuUnsaved = 1,
     MenuRead,
-    MenuSettings,
     MenuVersion,
     MenuAuto,
     MenuKeys,
@@ -2616,8 +2615,6 @@ static bool custom_event(void* context, uint32_t event) {
         show_file_list(app, false);
     } else if(event == MenuRead) {
         start_read(app);
-    } else if(event == MenuSettings) {
-        show_settings(app);
     } else if(event == MenuVersion) {
         show_settings(app);
     } else if(event == MenuAuto) {
