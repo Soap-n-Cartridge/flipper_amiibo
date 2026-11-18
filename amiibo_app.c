@@ -1518,8 +1518,8 @@ typedef struct {
     uint8_t frame;
 } SplashModel;
 
-#define SPLASH_FRAME_MS 200
-#define SPLASH_HOLD_MS 500
+#define SPLASH_FRAME_MS 120
+#define SPLASH_HOLD_MS 2000
 
 static void app_tick(void* context) {
     App* app = context;

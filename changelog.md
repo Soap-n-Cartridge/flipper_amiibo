@@ -7,7 +7,7 @@ Lists keep Amiibo-shaped files: .bin files of 520, 540, or 572 bytes, and .nfc f
 
 About, on the main menu, says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. It also says the app is open source and written by Soap-n-Cartridge. The app does not own Amiibo or Nintendo content.
 
-On launch the app plays the splash over 2 seconds, holds the last frame for half a second, then opens the main menu.
+On launch the app plays the splash over 1.2 seconds, holds the last frame for 2 seconds, then opens the main menu.
 
 v1.1:
 Folder names show how many Amiibos are inside, including folders within them. A folder with none shows no number. Every number ends on the same right edge. The main menu has an About picture for the Nintendo trademark and copyright notice. About also says the app is open source and written by Soap-n-Cartridge. After a scan works, the app returns to the Scan menu so the next Amiibo can be scanned.
