@@ -1,4 +1,4 @@
-/* Full-screen menu frames, 128x64, 1 bit. Generated from icons/. */
+/* Full-screen menu frames, 128x64, 1 bit. Generated from gfx/carousel/. */
 #include "menu_icons.h"
 
 static const uint8_t menu_icon_database[] = {

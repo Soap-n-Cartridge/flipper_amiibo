@@ -1514,25 +1514,33 @@ static void stop_read(App* app) {
 }
 
 
+typedef struct {
+    uint8_t frame;
+} SplashModel;
+
+#define SPLASH_FRAME_MS 100
+
 static void app_tick(void* context) {
     App* app = context;
     if(app->current == ViewCleanup) cleanup_hold_tick(app);
-    if(app->current == ViewSplash &&
-       (int32_t)(furi_get_tick() - app->splash_started) >= (int32_t)furi_ms_to_ticks(2000)) {
+    if(app->current != ViewSplash) return;
+    uint32_t frame = (furi_get_tick() - app->splash_started) / furi_ms_to_ticks(SPLASH_FRAME_MS);
+    if(frame >= SPLASH_FRAME_COUNT) {
         show_menu(app);
+        return;
     }
+    SplashModel* model = view_get_model(app->splash_view);
+    bool changed = model->frame != (uint8_t)frame;
+    model->frame = (uint8_t)frame;
+    view_commit_model(app->splash_view, changed);
 }
 
-static void splash_draw(Canvas* canvas, void* context) {
-    UNUSED(context);
+static void splash_draw(Canvas* canvas, void* model) {
+    const SplashModel* splash = model;
+    uint8_t frame = splash->frame;
+    if(frame >= SPLASH_FRAME_COUNT) frame = SPLASH_FRAME_COUNT - 1;
     canvas_clear(canvas);
-    canvas_draw_xbm(
-        canvas,
-        (128 - SPLASH_WIDTH) / 2,
-        (64 - SPLASH_HEIGHT) / 2,
-        SPLASH_WIDTH,
-        SPLASH_HEIGHT,
-        splash_bits);
+    canvas_draw_xbm(canvas, 0, 0, SPLASH_WIDTH, SPLASH_HEIGHT, splash_frames[frame]);
 }
 
 static bool splash_input(InputEvent* event, void* context) {
@@ -2612,6 +2620,10 @@ int32_t flipper_amiibo_app(void* arg) {
     view_stack_add_view(app->tag_stack, widget_get_view(app->widget));
     view_stack_add_view(app->tag_stack, app->tag_buttons);
     app->splash_view = view_alloc();
+    view_allocate_model(app->splash_view, ViewModelTypeLocking, sizeof(SplashModel));
+    SplashModel* splash_model = view_get_model(app->splash_view);
+    splash_model->frame = 0;
+    view_commit_model(app->splash_view, false);
     view_set_context(app->splash_view, app);
     view_set_draw_callback(app->splash_view, splash_draw);
     view_set_input_callback(app->splash_view, splash_input);
