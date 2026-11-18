@@ -4,7 +4,7 @@ Version 1.2.
 
 This app is similar to the devices that are selling online for $30-50, except this is even better! Whether you want to backup your Amiibo collection and use them on the go, or download a complete set of Amiibos (use Google to find them), this app will ocme in handy! You can then generate random identifiers, so games like Ocarina of Time will allow unlimited loot drops. The "Amiibo Blast" option gives you a new Amiibo identifier sent to your game every couple seconds until you stop it. Then on your game controller, just activate the Amiibo option over and over, and watch the bombs, hearts, arrows, etc rain down around you!
 
-This app saves Amiibos you already own, so you can use them again later on compatible Nintendo games, such as Switch / Switch 2, 3DS, and Wii. You do not need a downloaded list of Amiibos. You do not need a key file to save and play your own.
+This app saves Amiibos you already own, so you can use them again later on compatible Nintendo game software on various systems, such as Switch / Switch 2, 3DS, and Wii. You do not need a downloaded list of Amiibos. You do not need a key file to save and play your own.
 
 1. Scan your real Amiibo.
 2. Save a copy in Favorites.
