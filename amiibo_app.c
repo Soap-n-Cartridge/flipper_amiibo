@@ -54,7 +54,6 @@ typedef enum {
     MenuSort,
     MenuDeleteScanned,
     MenuDeleteFavorites,
-    MenuDeleteAll,
     MenuEmpty,
 } MenuId;
 
@@ -280,8 +279,7 @@ static const char HELP[] =
     "removes scans only.\n"
     "Delete Favorites\n"
     "removes favorites only.\n"
-    "Delete All removes\n"
-    "both. Hold Up for\n"
+    "Hold Up for\n"
     "2 seconds. The\n"
     "downloaded database\n"
     "stays.\n";
@@ -1144,7 +1142,6 @@ static void show_settings(App* app) {
         MenuSort);
     list_add(app, "Delete Scanned Amiibos", 0, false, MenuDeleteScanned);
     list_add(app, "Delete Favorites", 0, false, MenuDeleteFavorites);
-    list_add(app, "Delete All", 0, false, MenuDeleteAll);
     if(app->settings_index == 0) app->settings_index = MenuVersion;
     list_select(app, app->settings_index);
     app->current = ViewSettings;
@@ -1154,7 +1151,6 @@ static void show_settings(App* app) {
 typedef enum {
     CleanupScanned,
     CleanupFavorites,
-    CleanupAll,
 } CleanupKind;
 
 static bool path_in_folder(const App* app, const char* folder) {
@@ -1197,11 +1193,6 @@ static void erase_favorites(App* app) {
     forget_if_deleted(app, false, true);
 }
 
-static void erase_added_tags(App* app) {
-    erase_scanned(app);
-    erase_favorites(app);
-}
-
 typedef struct {
     uint8_t filled;
     uint8_t kind;
@@ -1209,12 +1200,9 @@ typedef struct {
 
 static void cleanup_draw(Canvas* canvas, void* context) {
     const CleanupModel* model = context;
-    const char* title = "Delete all added?";
-    const char* what = "Scans and Favorites.";
-    if(model->kind == CleanupScanned) {
-        title = "Delete scans?";
-        what = "Scanned Amiibos only.";
-    } else if(model->kind == CleanupFavorites) {
+    const char* title = "Delete scans?";
+    const char* what = "Scanned Amiibos only.";
+    if(model->kind == CleanupFavorites) {
         title = "Delete favorites?";
         what = "Favorites only.";
     }
@@ -1278,15 +1266,12 @@ static void cleanup_hold_tick(App* app) {
     view_commit_model(app->cleanup_view, changed);
     if(!erase) return;
     const char* header = "Deleted";
-    const char* text = "Scans and Favorites\nare gone.\nDownloaded database\nstays.";
-    if(kind == CleanupScanned) {
-        erase_scanned(app);
-        text = "Scanned Amiibos\nare gone.\nDownloaded database\nstays.";
-    } else if(kind == CleanupFavorites) {
+    const char* text = "Scanned Amiibos\nare gone.\nDownloaded database\nstays.";
+    if(kind == CleanupFavorites) {
         erase_favorites(app);
         text = "Favorites\nare gone.\nDownloaded database\nstays.";
     } else {
-        erase_added_tags(app);
+        erase_scanned(app);
     }
     app_alert(app, header, text);
     show_settings(app);
@@ -2464,8 +2449,6 @@ static bool custom_event(void* context, uint32_t event) {
         show_cleanup(app, CleanupScanned);
     } else if(event == MenuDeleteFavorites) {
         show_cleanup(app, CleanupFavorites);
-    } else if(event == MenuDeleteAll) {
-        show_cleanup(app, CleanupAll);
     } else if(event == GuiButtonTypeLeft + 100) {
         if(app->uid_confirm) {
             app->uid_confirm = false;

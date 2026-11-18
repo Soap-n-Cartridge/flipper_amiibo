@@ -64,7 +64,6 @@ A folder named ZE always tries to make a new ID. That needs the key file. A fold
 - **Sort lists** is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. Unsorted is the flat list, and it is the default the first time you open the app. By Series makes a folder for each series that has Amiibos, with a count, using the series byte in the figure ID. A series with nothing in it is hidden. Anything this app cannot name goes in Other. The choice stays after you close the app.
 - **Delete Scanned Amiibos** removes only the scans. The screen names what will be removed. Hold Up for 2 seconds. The downloaded library stays.
 - **Delete Favorites** removes only Favorites. The screen names what will be removed. Hold Up for 2 seconds. The downloaded library stays.
-- **Delete All** removes scans and Favorites. It does not remove the downloaded library. The screen says so. Hold Up for 2 seconds.
 
 ## The key file
 

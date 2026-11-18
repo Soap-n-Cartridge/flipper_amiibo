@@ -1,5 +1,5 @@
 v1.2:
-Settings can delete scanned Amiibos, Favorites, or both. Each one names what will be removed and asks you to hold Up for 2 seconds. The downloaded library on the SD card stays. Deleting one Amiibo you have open still asks first.
+Settings can delete scanned Amiibos or Favorites. Each one names what will be removed and asks you to hold Up for 2 seconds. The downloaded library on the SD card stays. Deleting one Amiibo you have open still asks first.
 
 Sort lists is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. Unsorted is the flat list, and it is the default the first time you open the app. By Series groups them from the figure ID and shows a count for each series that has Amiibos. A series with nothing in it is hidden. One this app cannot name goes in Other. The choice stays after you close the app.
 
