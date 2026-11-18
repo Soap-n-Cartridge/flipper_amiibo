@@ -53,7 +53,6 @@ typedef enum {
     MenuAuto,
     MenuKeys,
     MenuSort,
-    MenuBlast,
     MenuDeleteScanned,
     MenuDeleteFavorites,
     MenuEmpty,
@@ -123,7 +122,6 @@ typedef struct {
     bool dirty;
     bool auto_uid;
     bool sort_series;
-    uint8_t blast_interval;
     bool list_cut;
     bool cut_notice;
     ViewId notice_return;
@@ -192,11 +190,9 @@ static const char HELP[] =
     "\n"
     "Amiibo Blast lists\n"
     "your Favorites. Blast\n"
-    "sends a new ID, pauses,\n"
-    "and repeats. Settings\n"
-    "sets that interval,\n"
-    "from 1 to 5 seconds.\n"
-    "It starts at 2.\n"
+    "sends a new ID for\n"
+    "1 second, pauses\n"
+    "3 seconds, and repeats.\n"
     "It does not save that\n"
     "ID. Any key stops.\n"
     "This needs the key\n"
@@ -297,12 +293,6 @@ static const char HELP[] =
     "Unsorted or By Series\n"
     "for Favorites and\n"
     "Scanned Amiibos.\n"
-    "\n"
-    "Blast interval sets\n"
-    "how long Blast sends\n"
-    "and how long it pauses.\n"
-    "1 to 5 seconds. It\n"
-    "starts at 2.\n"
     "\n"
     "Delete Scanned Amiibos\n"
     "removes scans only.\n"
@@ -521,20 +511,19 @@ static const char* policy_label(const App* app) {
     return app->auto_uid ? "Auto UID: on" : "Auto UID: off";
 }
 
+static void save_settings(App* app);
+
 static void load_settings(App* app) {
     app->auto_uid = true;
     app->sort_series = false;
-    app->blast_interval = 2;
     File* file = storage_file_alloc(app->storage);
     if(storage_file_open(file, APP_DATA_PATH("auto_uid"), FSAM_READ, FSOM_OPEN_EXISTING)) {
         char value[3];
         size_t read = storage_file_read(file, value, sizeof(value));
         if(read >= 1) app->auto_uid = value[0] != '0';
         if(read >= 2) app->sort_series = value[1] == '1';
-        if(read >= 3 && value[2] >= '1' && value[2] <= '5') {
-            app->blast_interval = (uint8_t)(value[2] - '0');
-        }
         storage_file_close(file);
+        if(read > 2) save_settings(app);
     }
     storage_file_free(file);
 }
@@ -542,10 +531,9 @@ static void load_settings(App* app) {
 static void save_settings(App* app) {
     File* file = storage_file_alloc(app->storage);
     if(storage_file_open(file, APP_DATA_PATH("auto_uid"), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        char value[3];
+        char value[2];
         value[0] = app->auto_uid ? '1' : '0';
         value[1] = app->sort_series ? '1' : '0';
-        value[2] = (char)('0' + app->blast_interval);
         storage_file_write(file, value, sizeof(value));
         storage_file_close(file);
     }
@@ -1193,9 +1181,6 @@ static void show_settings(App* app) {
         0,
         false,
         MenuSort);
-    char blast_line[24];
-    snprintf(blast_line, sizeof(blast_line), "Blast interval: %usec", app->blast_interval);
-    list_add(app, blast_line, 0, false, MenuBlast);
     list_add(app, "Delete Scanned Amiibos", 0, false, MenuDeleteScanned);
     list_add(app, "Delete Favorites", 0, false, MenuDeleteFavorites);
     if(app->settings_index == 0) app->settings_index = MenuVersion;
@@ -1573,11 +1558,8 @@ typedef struct {
 
 #define SPLASH_FRAME_MS 120
 #define SPLASH_HOLD_MS 2000
-static uint32_t blast_phase_ticks(const App* app) {
-    uint8_t seconds = app->blast_interval;
-    if(seconds < 1 || seconds > 5) seconds = 2;
-    return furi_ms_to_ticks((uint32_t)seconds * 1000);
-}
+#define BLAST_SEND_MS 1000
+#define BLAST_PAUSE_MS 3000
 
 static void blast_restore(App* app) {
     memcpy(app->tag, app->blast_saved, AMIIBO_TAG_SIZE);
@@ -1651,7 +1633,8 @@ static void blast_start(App* app) {
 
 static void blast_tick(App* app) {
     if(!app->blasting) return;
-    if((furi_get_tick() - app->blast_phase_started) < blast_phase_ticks(app)) return;
+    uint32_t phase_ms = app->blast_on_air ? BLAST_SEND_MS : BLAST_PAUSE_MS;
+    if((furi_get_tick() - app->blast_phase_started) < furi_ms_to_ticks(phase_ms)) return;
     if(app->blast_on_air) {
         blast_pause(app);
         return;
@@ -2644,11 +2627,6 @@ static bool custom_event(void* context, uint32_t event) {
     } else if(event == MenuSort) {
         app->sort_series = !app->sort_series;
         app->in_series = false;
-        save_settings(app);
-        show_settings(app);
-    } else if(event == MenuBlast) {
-        app->blast_interval++;
-        if(app->blast_interval < 1 || app->blast_interval > 5) app->blast_interval = 1;
         save_settings(app);
         show_settings(app);
     } else if(event == MenuKeys) {
