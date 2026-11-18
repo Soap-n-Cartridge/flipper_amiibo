@@ -9,6 +9,8 @@ About, on the main menu, says Amiibo is a Nintendo trademark and that the charac
 
 On launch the app plays the splash over 1.2 seconds, holds the last frame for 2 seconds, then opens the main menu.
 
+Amiibo Blast lists the same Amiibos as Favorites. You cannot favorite or delete from that list. Blast makes a new ID, sends it for 2 seconds, pauses 2 seconds, and repeats until you press any key. Those IDs are not saved, and the favorite file stays as it was. This needs the key file. If the key is missing, Blast says so.
+
 v1.1:
 Folder names show how many Amiibos are inside, including folders within them. A folder with none shows no number. Every number ends on the same right edge. The main menu has an About picture for the Nintendo trademark and copyright notice. About also says the app is open source and written by Soap-n-Cartridge. After a scan works, the app returns to the Scan menu so the next Amiibo can be scanned.
 

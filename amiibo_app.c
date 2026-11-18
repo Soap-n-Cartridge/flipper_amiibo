@@ -42,6 +42,7 @@ typedef enum {
     ViewDatabase,
     ViewCleanup,
     ViewNotice,
+    ViewBlast,
 } ViewId;
 
 typedef enum {
@@ -76,6 +77,7 @@ typedef enum {
     OriginDatabase,
     OriginSaved,
     OriginUnsaved,
+    OriginBlast,
 } TagOrigin;
 
 typedef enum {
@@ -83,6 +85,7 @@ typedef enum {
     BrowseDatabase,
     BrowseSaved,
     BrowseUnsaved,
+    BrowseBlast,
 } BrowseFrom;
 
 typedef struct {
@@ -124,6 +127,12 @@ typedef struct {
     ViewId notice_return;
     bool in_series;
     bool in_other;
+    bool blast_list;
+    bool blasting;
+    bool blast_on_air;
+    uint32_t blast_phase_started;
+    uint32_t blast_index;
+    uint8_t blast_saved[AMIIBO_TAG_SIZE];
     uint8_t open_series;
     uint8_t series_ids[32];
     uint8_t series_other[32];
@@ -178,6 +187,16 @@ static const char HELP[] =
     "game reader. The game\n"
     "sees that same\n"
     "Amiibo.\n"
+    "\n"
+    "Amiibo Blast lists\n"
+    "your Favorites. Blast\n"
+    "sends a new ID for\n"
+    "2 seconds, pauses\n"
+    "2 seconds, and repeats.\n"
+    "It does not save that\n"
+    "ID. Any key stops.\n"
+    "This needs the key\n"
+    "file.\n"
     "\n"
     "Key\n"
     "The app cannot include\n"
@@ -389,6 +408,7 @@ static void show_about(App* app) {
 
 static void show_menu(App* app);
 static void show_tag(App* app);
+static void blast_stop(App* app);
 static void show_database(App* app);
 static void widget_callback(GuiButtonType button, InputType type, void* context);
 static void submenu_callback(void* context, uint32_t index);
@@ -725,6 +745,13 @@ static void tag_buttons_draw(Canvas* canvas, void* context) {
     App* app = model->app;
     if(app->current != ViewTag || app->uid_confirm) return;
 
+    if(app->origin == OriginBlast) {
+        canvas_set_font(canvas, FontSecondary);
+        uint8_t mid_w = tag_button_width(canvas, "Blast", true);
+        tag_button_draw(canvas, (128 - mid_w) / 2, mid_w, "Blast", 'C');
+        return;
+    }
+
     const char* left = app->origin == OriginSaved ? "New UID" : "Fav";
     const char* right = app->origin == OriginDatabase ? "New UID" : "Del";
     canvas_set_font(canvas, FontSecondary);
@@ -740,7 +767,18 @@ static void tag_buttons_draw(Canvas* canvas, void* context) {
 
 static bool tag_buttons_input(InputEvent* event, void* context) {
     App* app = context;
+    if(app->blasting) {
+        if(event->type == InputTypeShort) blast_stop(app);
+        return true;
+    }
     if(app->current != ViewTag || app->uid_confirm) return false;
+    if(app->origin == OriginBlast) {
+        if(event->key == InputKeyOk) {
+            widget_callback(GuiButtonTypeCenter, event->type, app);
+            return true;
+        }
+        return false;
+    }
     if(event->key == InputKeyLeft) {
         widget_callback(GuiButtonTypeLeft, event->type, app);
         return true;
@@ -1287,7 +1325,7 @@ static void show_cleanup(App* app, CleanupKind kind) {
     view_dispatcher_switch_to_view(app->dispatcher, ViewCleanup);
 }
 
-static bool assign_uid(App* app) {
+static bool make_new_uid(App* app) {
     if(!app->keys_loaded) {
         app_alert(app, "Key file needed", "Copy key_retail.bin\ninto the app folder.");
         return false;
@@ -1299,31 +1337,42 @@ static bool assign_uid(App* app) {
         make_uid(uid);
         if(memcmp(uid, current, sizeof(uid)) != 0) break;
     }
-    if(app->figure_read) {
-        app->figure_read = false;
-        app->policy = UidFollowSetting;
-    }
     AmiiboResult result = amiibo_set_uid(app->tag, &app->keys, uid);
     if(result != AmiiboOk) {
         app_alert(app, "Not signed", "The dump did not\nmatch the key file.");
         return false;
     }
+    return true;
+}
+
+static bool assign_uid(App* app) {
+    if(!make_new_uid(app)) return false;
+    if(app->figure_read) {
+        app->figure_read = false;
+        app->policy = UidFollowSetting;
+    }
     app->dirty = true;
     return true;
 }
 
-static void stop_emulate(App* app) {
+static void stop_listener(App* app, bool keep_live, bool mark_dirty) {
     if(!app->emulating) return;
     nfc_listener_stop(app->listener);
-    const MfUltralightData* live = nfc_listener_get_data(app->listener, NfcProtocolMfUltralight);
-    tag_from_pages(app, live);
+    if(keep_live) {
+        const MfUltralightData* live = nfc_listener_get_data(app->listener, NfcProtocolMfUltralight);
+        tag_from_pages(app, live);
+    }
     nfc_listener_free(app->listener);
     app->listener = NULL;
     nfc_free(app->nfc);
     app->nfc = NULL;
     app->emulating = false;
-    app->dirty = true;
+    if(mark_dirty) app->dirty = true;
     notification_message(app->notifications, &sequence_blink_stop);
+}
+
+static void stop_emulate(App* app) {
+    stop_listener(app, true, true);
 }
 
 static bool start_emulate(App* app, bool renew) {
@@ -1418,6 +1467,7 @@ enum {
     EventTagPrev = 230,
     EventTagNext = 231,
     EventFavNoted = 232,
+    EventBlastStop = 233,
 };
 
 #define READ_WAIT_MS 5000
@@ -1505,10 +1555,96 @@ typedef struct {
 
 #define SPLASH_FRAME_MS 120
 #define SPLASH_HOLD_MS 2000
+#define BLAST_PHASE_MS 2000
+
+static void blast_restore(App* app) {
+    memcpy(app->tag, app->blast_saved, AMIIBO_TAG_SIZE);
+    if(app->loaded) pages_from_tag(app);
+    app->dirty = false;
+}
+
+static void blast_show(App* app, bool on_air) {
+    uint8_t uid[7];
+    char uid_text[24];
+    amiibo_uid_from_tag(app->tag, uid);
+    format_uid_display(uid, uid_text, sizeof(uid_text));
+    FuriString* name = furi_string_alloc();
+    path_extract_filename(app->path, name, true);
+    furi_string_printf(
+        app->info,
+        on_air ? "\e#Blasting\n%s\n%s\nAny key stops" : "\e#Blast pause\n%s\n%s\nAny key stops",
+        furi_string_get_cstr(name),
+        uid_text);
+    furi_string_free(name);
+    widget_reset(app->widget);
+    widget_add_text_scroll_element(app->widget, 0, 0, 128, 64, furi_string_get_cstr(app->info));
+    app->current = ViewEmulate;
+    view_dispatcher_switch_to_view(app->dispatcher, ViewTag);
+    if(on_air) notification_message(app->notifications, &sequence_blink_start_magenta);
+}
+
+static bool blast_go_on_air(App* app) {
+    if(!make_new_uid(app)) return false;
+    pages_from_tag(app);
+    app->nfc = nfc_alloc();
+    const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
+    app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
+    nfc_listener_start(app->listener, NULL, NULL);
+    app->emulating = true;
+    app->blast_on_air = true;
+    app->blast_phase_started = furi_get_tick();
+    blast_show(app, true);
+    return true;
+}
+
+static void blast_pause(App* app) {
+    stop_listener(app, false, false);
+    app->blast_on_air = false;
+    app->blast_phase_started = furi_get_tick();
+    blast_show(app, false);
+}
+
+static void blast_stop(App* app) {
+    if(!app->blasting) return;
+    app->blasting = false;
+    app->blast_on_air = false;
+    if(app->emulating) stop_listener(app, false, false);
+    blast_restore(app);
+    show_tag(app);
+}
+
+static void blast_start(App* app) {
+    if(!app->loaded) {
+        app_alert(app, "No dump", "Open an Amiibo\nfirst.");
+        return;
+    }
+    memcpy(app->blast_saved, app->tag, AMIIBO_TAG_SIZE);
+    app->blasting = true;
+    if(!blast_go_on_air(app)) {
+        app->blasting = false;
+        blast_restore(app);
+        show_tag(app);
+    }
+}
+
+static void blast_tick(App* app) {
+    if(!app->blasting) return;
+    if((furi_get_tick() - app->blast_phase_started) < furi_ms_to_ticks(BLAST_PHASE_MS)) return;
+    if(app->blast_on_air) {
+        blast_pause(app);
+        return;
+    }
+    if(!blast_go_on_air(app)) {
+        app->blasting = false;
+        blast_restore(app);
+        show_tag(app);
+    }
+}
 
 static void app_tick(void* context) {
     App* app = context;
     if(app->current == ViewCleanup) cleanup_hold_tick(app);
+    if(app->blasting) blast_tick(app);
     if(app->current != ViewSplash) return;
     uint32_t frame_ticks = furi_ms_to_ticks(SPLASH_FRAME_MS);
     uint32_t elapsed = furi_get_tick() - app->splash_started;
@@ -1736,7 +1872,10 @@ static void show_file_list(App* app, bool saved) {
 
     list_reset(app);
     if(app->sort_series && !app->in_series) {
-        list_header(app, saved ? "Favorites" : "Scanned Amiibos", total, true);
+        const char* root_title = "Scanned Amiibos";
+        if(saved && app->blast_list) root_title = "Amiibo Blast";
+        else if(saved) root_title = "Favorites";
+        list_header(app, root_title, total, true);
         app->series_shown = 0;
         for(size_t i = 0; i < amiibo_series_count() && app->series_shown < 32; i++) {
             uint8_t id = 0;
@@ -1776,18 +1915,25 @@ static void show_file_list(App* app, bool saved) {
         }
         list_header(app, title, header_count, true);
         add_file_rows(app);
-        uint32_t selected = saved ? app->saved_index : app->unsaved_index;
+        uint32_t selected = app->unsaved_index;
+        if(saved && app->blast_list) selected = app->blast_index;
+        else if(saved) selected = app->saved_index;
         if(app->file_count == 0) selected = MenuEmpty;
         list_select(app, selected);
     } else {
-        list_header(
-            app, saved ? "Favorites" : "Scanned Amiibos", count_tags_in(app, folder), true);
+        const char* root_title = "Scanned Amiibos";
+        if(saved && app->blast_list) root_title = "Amiibo Blast";
+        else if(saved) root_title = "Favorites";
+        list_header(app, root_title, count_tags_in(app, folder), true);
         add_file_rows(app);
-        uint32_t selected = saved ? app->saved_index : app->unsaved_index;
+        uint32_t selected = app->unsaved_index;
+        if(saved && app->blast_list) selected = app->blast_index;
+        else if(saved) selected = app->saved_index;
         if(app->file_count == 0) selected = MenuEmpty;
         list_select(app, selected);
     }
-    app->current = saved ? ViewSaved : ViewUnsaved;
+    if(saved && app->blast_list) app->current = ViewBlast;
+    else app->current = saved ? ViewSaved : ViewUnsaved;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
     if(app->list_cut) show_cut_notice(app, FILE_MAX);
 }
@@ -1796,18 +1942,27 @@ static bool load_listed_file(App* app, uint8_t index, bool saved) {
     if(index >= app->file_count || !furi_string_size(app->files[index])) return false;
     furi_string_set(app->path, app->files[index]);
     if(!load_selected(app)) return false;
-    app->origin = saved ? OriginSaved : OriginUnsaved;
     app->policy = UidForceOff;
     app->figure_read = true;
-    app->browse = saved ? BrowseSaved : BrowseUnsaved;
-    if(saved) app->saved_index = MenuFileBase + index;
-    else app->unsaved_index = MenuFileBase + index;
+    if(saved && app->blast_list) {
+        app->origin = OriginBlast;
+        app->browse = BrowseBlast;
+        app->blast_index = MenuFileBase + index;
+    } else if(saved) {
+        app->origin = OriginSaved;
+        app->browse = BrowseSaved;
+        app->saved_index = MenuFileBase + index;
+    } else {
+        app->origin = OriginUnsaved;
+        app->browse = BrowseUnsaved;
+        app->unsaved_index = MenuFileBase + index;
+    }
     show_tag(app);
     return true;
 }
 
 static void open_series_row(App* app, uint8_t index) {
-    bool saved = app->current == ViewSaved;
+    bool saved = app->current == ViewSaved || app->current == ViewBlast;
     if(index >= app->series_shown) {
         show_file_list(app, saved);
         return;
@@ -1816,13 +1971,14 @@ static void open_series_row(App* app, uint8_t index) {
     app->in_series = true;
     app->in_other = app->series_other[index] != 0;
     app->open_series = app->series_ids[index];
-    if(saved) app->saved_index = MenuFileBase;
+    if(saved && app->blast_list) app->blast_index = MenuFileBase;
+    else if(saved) app->saved_index = MenuFileBase;
     else app->unsaved_index = MenuFileBase;
     show_file_list(app, saved);
 }
 
 static void open_listed(App* app, uint8_t index) {
-    bool saved = app->current == ViewSaved;
+    bool saved = app->current == ViewSaved || app->current == ViewBlast;
     if(app->sort_series && !app->in_series) {
         open_series_row(app, index);
         return;
@@ -1970,13 +2126,18 @@ static void carousel_open(App* app) {
     if(index == 0) {
         show_database(app);
     } else if(index == 1) {
+        app->blast_list = false;
         app->in_series = false;
         show_file_list(app, true);
     } else if(index == 2) {
         show_scan(app);
     } else if(index == 3) {
-        show_settings(app);
+        app->blast_list = true;
+        app->in_series = false;
+        show_file_list(app, true);
     } else if(index == 4) {
+        show_settings(app);
+    } else if(index == 5) {
         app->current = ViewHelp;
         view_dispatcher_switch_to_view(app->dispatcher, ViewHelp);
     } else {
@@ -1988,9 +2149,10 @@ static int section_of(App* app) {
     if(app->current == ViewDatabase) return 0;
     if(app->current == ViewSaved) return 1;
     if(app->current == ViewMy) return 2;
-    if(app->current == ViewSettings) return 3;
-    if(app->current == ViewHelp) return 4;
-    if(app->current == ViewAbout) return 5;
+    if(app->current == ViewBlast) return 3;
+    if(app->current == ViewSettings) return 4;
+    if(app->current == ViewHelp) return 5;
+    if(app->current == ViewAbout) return 6;
     return -1;
 }
 
@@ -2009,6 +2171,10 @@ static void show_section(App* app, int index) {
 static void section_key(const void* message, void* context) {
     const InputEvent* event = message;
     App* app = context;
+    if(app->blasting && event->type == InputTypeShort) {
+        view_dispatcher_send_custom_event(app->dispatcher, EventBlastStop);
+        return;
+    }
     if(event->type != InputTypeShort && event->type != InputTypeRepeat) return;
     if(event->key == InputKeyLeft || event->key == InputKeyRight) {
         if(event->type != InputTypeShort) return;
@@ -2312,8 +2478,9 @@ static void step_tag(App* app, int dir) {
             }
         }
     } else if(app->file_count > 1) {
-        bool saved = app->browse == BrowseSaved;
-        uint32_t selected = saved ? app->saved_index : app->unsaved_index;
+        bool blast = app->browse == BrowseBlast;
+        bool saved = blast || app->browse == BrowseSaved;
+        uint32_t selected = blast ? app->blast_index : saved ? app->saved_index : app->unsaved_index;
         int pos = 0;
         if(selected >= MenuFileBase && selected < MenuFileBase + (uint32_t)app->file_count) {
             pos = (int)(selected - MenuFileBase);
@@ -2325,12 +2492,21 @@ static void step_tag(App* app, int dir) {
             furi_string_set(app->path, app->files[next]);
             ok = load_selected(app);
             if(ok) {
-                app->origin = saved ? OriginSaved : OriginUnsaved;
                 app->policy = UidForceOff;
                 app->figure_read = true;
-                app->browse = saved ? BrowseSaved : BrowseUnsaved;
-                if(saved) app->saved_index = MenuFileBase + (uint32_t)next;
-                else app->unsaved_index = MenuFileBase + (uint32_t)next;
+                if(blast) {
+                    app->origin = OriginBlast;
+                    app->browse = BrowseBlast;
+                    app->blast_index = MenuFileBase + (uint32_t)next;
+                } else if(saved) {
+                    app->origin = OriginSaved;
+                    app->browse = BrowseSaved;
+                    app->saved_index = MenuFileBase + (uint32_t)next;
+                } else {
+                    app->origin = OriginUnsaved;
+                    app->browse = BrowseUnsaved;
+                    app->unsaved_index = MenuFileBase + (uint32_t)next;
+                }
                 show_tag(app);
             }
         }
@@ -2351,6 +2527,7 @@ static void submenu_callback(void* context, uint32_t index) {
     if(app->current == ViewSettings) app->settings_index = index;
     else if(app->current == ViewMy) app->my_index = index;
     else if(app->current == ViewSaved) app->saved_index = index;
+    else if(app->current == ViewBlast) app->blast_index = index;
     else if(app->current == ViewUnsaved) app->unsaved_index = index;
     else if(app->current == ViewDatabase && index >= MenuFileBase) app->db_index = index - MenuFileBase;
     view_dispatcher_send_custom_event(app->dispatcher, index);
@@ -2360,6 +2537,10 @@ static bool custom_event(void* context, uint32_t event) {
     App* app = context;
     if(event == EventMenuTick) {
         menu_tick(app);
+        return true;
+    }
+    if(event == EventBlastStop) {
+        blast_stop(app);
         return true;
     }
     if(event == EventSectionLeft || event == EventSectionRight) {
@@ -2397,6 +2578,10 @@ static bool custom_event(void* context, uint32_t event) {
     }
 
     if(app->emulating && event == GuiButtonTypeCenter + 100) {
+        if(app->blasting) {
+            blast_stop(app);
+            return true;
+        }
         stop_emulate(app);
         if(!start_emulate(app, true)) show_tag(app);
         return true;
@@ -2415,10 +2600,11 @@ static bool custom_event(void* context, uint32_t event) {
     if(event == MenuEmpty) {
         if(app->current == ViewDatabase) db_up(app);
         else if(app->sort_series && app->in_series &&
-                (app->current == ViewSaved || app->current == ViewUnsaved)) {
+                (app->current == ViewSaved || app->current == ViewBlast ||
+                 app->current == ViewUnsaved)) {
             app->in_series = false;
-            show_file_list(app, app->current == ViewSaved);
-        } else if(app->current == ViewSaved) show_menu(app);
+            show_file_list(app, app->current != ViewUnsaved);
+        } else if(app->current == ViewSaved || app->current == ViewBlast) show_menu(app);
         else show_scan(app);
     } else if(event == MenuUnsaved) {
         app->in_series = false;
@@ -2460,11 +2646,12 @@ static bool custom_event(void* context, uint32_t event) {
             show_uid_confirm(app);
         }
     } else if(event == GuiButtonTypeCenter + 100) {
-        start_emulate(app, false);
+        if(app->origin == OriginBlast) blast_start(app);
+        else start_emulate(app, false);
     } else if(event == GuiButtonTypeRight + 100) {
         if(app->origin == OriginDatabase) {
             if(assign_uid(app)) show_tag(app);
-        } else {
+        } else if(app->origin != OriginBlast) {
             delete_current(app);
         }
     }
@@ -2476,6 +2663,10 @@ static bool back_event(void* context) {
     if(app->reading || app->current == ViewRead) {
         stop_read(app);
         show_scan(app);
+        return true;
+    }
+    if(app->blasting) {
+        blast_stop(app);
         return true;
     }
     if(app->emulating || app->current == ViewEmulate) {
@@ -2492,7 +2683,7 @@ static bool back_event(void* context) {
         db_up(app);
         return true;
     }
-    if(app->current == ViewSaved) {
+    if(app->current == ViewSaved || app->current == ViewBlast) {
         if(app->sort_series && app->in_series) {
             app->in_series = false;
             show_file_list(app, true);
@@ -2530,7 +2721,7 @@ static bool back_event(void* context) {
         return true;
     }
     if(app->current == ViewTag) {
-        if(app->origin == OriginSaved) show_file_list(app, true);
+        if(app->origin == OriginSaved || app->origin == OriginBlast) show_file_list(app, true);
         else if(app->origin == OriginUnsaved) show_file_list(app, false);
         else show_database(app);
         return true;
