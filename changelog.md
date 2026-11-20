@@ -1,6 +1,8 @@
 v1.2:
 Settings can delete scanned Amiibos or Favorites. Each one names what will be removed and asks you to hold Up for 2 seconds. The downloaded library on the SD card stays. Deleting one Amiibo you have open still asks first.
 
+Key files are found under apps_data/flipper_amiibo or the Amiibo database folder even when they sit in a subfolder. key_retail.bin works, and so do unfixed-info.bin plus locked-secret.bin in the same folder. Existing nfc/amiibo_keys.bin paths still work.
+
 Sort lists is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. Unsorted is the flat list, and it is the default the first time you open the app. By Series groups them from the figure ID and shows a count for each series that has Amiibos. A series with nothing in it is hidden. One this app cannot name goes in Other. The choice stays after you close the app.
 
 Lists keep Amiibo-shaped files: .bin files of 520, 540, or 572 bytes, and .nfc files that look like NTAG215. Other NFC dumps are skipped. One database folder shows at most 200 names, then a short note that the rest were left off. Favorites and Scanned Amiibos show 40 and say so when more are there.

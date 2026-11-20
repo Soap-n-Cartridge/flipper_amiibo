@@ -146,7 +146,7 @@ typedef struct {
     TagOrigin origin;
     BrowseFrom browse;
     ViewId current;
-    char key_path[96];
+    char key_path[192];
     uint32_t my_index;
     uint32_t settings_index;
     uint32_t saved_index;
@@ -214,9 +214,18 @@ static const char HELP[] =
     "your Amiibo.\n"
     "\n"
     "If you have the file,\n"
-    "copy key_retail.bin\n"
-    "into:\n"
+    "put key_retail.bin in\n"
     "apps_data/flipper_amiibo\n"
+    "or in the Amiibo\n"
+    "database folder:\n"
+    "apps_data/flipper_amiibo/db\n"
+    "Any subfolder under\n"
+    "those trees is fine.\n"
+    "\n"
+    "Split keys work too:\n"
+    "unfixed-info.bin and\n"
+    "locked-secret.bin in\n"
+    "the same folder.\n"
     "\n"
     "If amiibo_keys.bin is\n"
     "already in the nfc\n"
@@ -539,28 +548,179 @@ static void save_settings(App* app) {
     storage_file_free(file);
 }
 
+#define APP_DATA_ROOT "/ext/apps_data/flipper_amiibo"
+#define KEY_HALF_SIZE (AMIIBO_KEY_SIZE / 2)
+#define KEY_WALK_MAX_DEPTH 6
+#define KEY_WALK_MAX_DIRS 200
+#define KEY_WALK_MAX_ENTRIES 800
+
+typedef struct {
+    uint16_t dirs;
+    uint16_t entries;
+} KeyWalkBudget;
+
+static bool name_eq_i(const char* left, const char* right) {
+    while(*left && *right) {
+        char a = *left++;
+        char b = *right++;
+        if(a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if(b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if(a != b) return false;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+static bool load_retail_key_at(App* app, const char* path) {
+    uint8_t bytes[AMIIBO_KEY_SIZE];
+    File* file = storage_file_alloc(app->storage);
+    bool opened = storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING);
+    size_t read = 0;
+    if(opened) read = storage_file_read(file, bytes, sizeof(bytes));
+    if(opened) storage_file_close(file);
+    storage_file_free(file);
+    if(read != sizeof(bytes) || !amiibo_keys_from_bytes(&app->keys, bytes, read)) return false;
+    app->keys_loaded = true;
+    snprintf(app->key_path, sizeof(app->key_path), "%s", path);
+    return true;
+}
+
+static bool load_split_keys_at(
+    App* app,
+    const char* dir,
+    const char* unfixed_name,
+    const char* locked_name) {
+    char path_unfixed[192];
+    char path_locked[192];
+    if(snprintf(path_unfixed, sizeof(path_unfixed), "%s/%s", dir, unfixed_name) >=
+       (int)sizeof(path_unfixed)) {
+        return false;
+    }
+    if(snprintf(path_locked, sizeof(path_locked), "%s/%s", dir, locked_name) >=
+       (int)sizeof(path_locked)) {
+        return false;
+    }
+
+    uint8_t bytes[AMIIBO_KEY_SIZE];
+    File* file = storage_file_alloc(app->storage);
+    size_t read_unfixed = 0;
+    size_t read_locked = 0;
+    if(storage_file_open(file, path_unfixed, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        read_unfixed = storage_file_read(file, bytes, KEY_HALF_SIZE);
+        storage_file_close(file);
+    }
+    if(read_unfixed == KEY_HALF_SIZE &&
+       storage_file_open(file, path_locked, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        read_locked = storage_file_read(file, bytes + KEY_HALF_SIZE, KEY_HALF_SIZE);
+        storage_file_close(file);
+    }
+    storage_file_free(file);
+
+    if(read_unfixed != KEY_HALF_SIZE || read_locked != KEY_HALF_SIZE) return false;
+    if(!amiibo_keys_from_bytes(&app->keys, bytes, AMIIBO_KEY_SIZE)) return false;
+    app->keys_loaded = true;
+    snprintf(app->key_path, sizeof(app->key_path), "%s", path_unfixed);
+    return true;
+}
+
+static bool walk_for_keys(App* app, const char* dir, uint8_t depth, KeyWalkBudget* budget) {
+    if(depth > KEY_WALK_MAX_DEPTH || budget->dirs >= KEY_WALK_MAX_DIRS ||
+       budget->entries >= KEY_WALK_MAX_ENTRIES) {
+        return false;
+    }
+    budget->dirs++;
+
+    File* handle = storage_file_alloc(app->storage);
+    if(!storage_dir_open(handle, dir)) {
+        storage_file_free(handle);
+        return false;
+    }
+
+    FileInfo info;
+    char name[128];
+    char unfixed_name[128];
+    char locked_name[128];
+    unfixed_name[0] = '\0';
+    locked_name[0] = '\0';
+
+    while(budget->entries < KEY_WALK_MAX_ENTRIES &&
+          storage_dir_read(handle, &info, name, (uint16_t)sizeof(name))) {
+        budget->entries++;
+        if(name[0] == '\0' || name[0] == '.') continue;
+        if((info.flags & FSF_DIRECTORY) != 0) continue;
+        if(name_eq_i(name, "key_retail.bin")) {
+            char path[192];
+            if(snprintf(path, sizeof(path), "%s/%s", dir, name) < (int)sizeof(path) &&
+               load_retail_key_at(app, path)) {
+                storage_dir_close(handle);
+                storage_file_free(handle);
+                return true;
+            }
+        } else if(name_eq_i(name, "unfixed-info.bin")) {
+            snprintf(unfixed_name, sizeof(unfixed_name), "%s", name);
+        } else if(name_eq_i(name, "locked-secret.bin")) {
+            snprintf(locked_name, sizeof(locked_name), "%s", name);
+        }
+    }
+
+    if(unfixed_name[0] != '\0' && locked_name[0] != '\0' &&
+       load_split_keys_at(app, dir, unfixed_name, locked_name)) {
+        storage_dir_close(handle);
+        storage_file_free(handle);
+        return true;
+    }
+
+    storage_dir_close(handle);
+    if(budget->dirs >= KEY_WALK_MAX_DIRS || budget->entries >= KEY_WALK_MAX_ENTRIES ||
+       depth >= KEY_WALK_MAX_DEPTH) {
+        storage_file_free(handle);
+        return false;
+    }
+
+    if(!storage_dir_open(handle, dir)) {
+        storage_file_free(handle);
+        return false;
+    }
+    /* Second pass only descends; entry budget was charged on the first pass. */
+    while(storage_dir_read(handle, &info, name, (uint16_t)sizeof(name))) {
+        if(name[0] == '\0' || name[0] == '.') continue;
+        if((info.flags & FSF_DIRECTORY) == 0) continue;
+        if(budget->dirs >= KEY_WALK_MAX_DIRS || budget->entries >= KEY_WALK_MAX_ENTRIES) break;
+        char child[192];
+        if(snprintf(child, sizeof(child), "%s/%s", dir, name) >= (int)sizeof(child)) continue;
+        if(walk_for_keys(app, child, (uint8_t)(depth + 1), budget)) {
+            storage_dir_close(handle);
+            storage_file_free(handle);
+            return true;
+        }
+    }
+    storage_dir_close(handle);
+    storage_file_free(handle);
+    return false;
+}
+
+static bool search_keys_under(App* app, const char* root) {
+    KeyWalkBudget budget = {.dirs = 0, .entries = 0};
+    return walk_for_keys(app, root, 0, &budget);
+}
+
 static void load_keys(App* app) {
-    const char* paths[] = {
+    const char* fixed_retail[] = {
         APP_DATA_PATH("key_retail.bin"),
         "/ext/nfc/assets/amiibo_keys.bin",
         "/ext/nfc/amiibo_keys.bin",
     };
     app->keys_loaded = false;
     app->key_path[0] = '\0';
-    uint8_t bytes[AMIIBO_KEY_SIZE];
-    for(size_t i = 0; i < COUNT_OF(paths); i++) {
-        File* file = storage_file_alloc(app->storage);
-        bool opened = storage_file_open(file, paths[i], FSAM_READ, FSOM_OPEN_EXISTING);
-        size_t read = 0;
-        if(opened) read = storage_file_read(file, bytes, sizeof(bytes));
-        if(opened) storage_file_close(file);
-        storage_file_free(file);
-        if(read == sizeof(bytes) && amiibo_keys_from_bytes(&app->keys, bytes, read)) {
-            app->keys_loaded = true;
-            snprintf(app->key_path, sizeof(app->key_path), "%s", paths[i]);
-            return;
-        }
+
+    for(size_t i = 0; i < COUNT_OF(fixed_retail); i++) {
+        if(load_retail_key_at(app, fixed_retail[i])) return;
     }
+
+    if(load_split_keys_at(app, APP_DATA_ROOT, "unfixed-info.bin", "locked-secret.bin")) return;
+
+    /* Documented app folder first, then the downloaded Amiibo library root. */
+    if(search_keys_under(app, APP_DATA_ROOT)) return;
+    search_keys_under(app, APP_DATA_PATH("db"));
 }
 
 static void pages_from_tag(App* app) {
@@ -2630,7 +2790,10 @@ static bool custom_event(void* context, uint32_t event) {
         if(app->keys_loaded) {
             app_alert(app, "Keys loaded", app->key_path);
         } else {
-            app_alert(app, "Keys missing", "Put key_retail.bin\nin apps_data/\nflipper_amiibo");
+            app_alert(
+                app,
+                "Keys missing",
+                "Put key_retail.bin\nin apps_data/\nflipper_amiibo\n(any subfolder)");
         }
         show_settings(app);
     } else if(event == MenuDeleteScanned) {
