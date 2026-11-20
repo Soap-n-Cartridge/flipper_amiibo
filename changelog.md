@@ -3,7 +3,7 @@ Settings can delete scanned Amiibos or Favorites. Each one names what will be re
 
 Key files are found under apps_data/flipper_amiibo or the Amiibo database folder even when they sit in a subfolder. key_retail.bin works, and so do unfixed-info.bin plus locked-secret.bin in the same folder. Existing nfc/amiibo_keys.bin paths still work.
 
-Amiibo Database hides folders that have no usable Amiibo tags in themselves or any subfolder, matching By Series. Directory reads use a 255-byte name buffer so FatFS long names show instead of 8.3 short names like LINK'S~1 when the SD has an LFN; the list truncates to the screen with an ellipsis.
+Amiibo Database hides folders that have no usable Amiibo tags in themselves or any subfolder, matching By Series. Directory reads use a 255-byte name buffer so FatFS long names show when the Flipper can keep them; the list truncates to the screen with an ellipsis. Names with a curly apostrophe (Unicode ’) can still appear as 8.3 short names such as LINK'S~1 — rename those folders with a straight ' on the PC before copying to the SD card.
 
 Sort lists is Unsorted or By Series. It applies to Favorites and to Scanned Amiibos. Unsorted is the flat list, and it is the default the first time you open the app. By Series groups them from the figure ID and shows a count for each series that has Amiibos. A series with nothing in it is hidden. One this app cannot name goes in Other. The choice stays after you close the app.
 
