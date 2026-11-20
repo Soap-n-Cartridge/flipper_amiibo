@@ -72,7 +72,7 @@ A folder named ZE always tries to make a new ID. That needs the key file. A fold
 
 The app cannot ship Nintendo's key file. Emulate of a scanned Amiibo works without it.
 
-New UID and Auto UID cannot change the ID unless that key file is on the SD card. If you already have the file, put key_retail.bin in the app folder apps_data/flipper_amiibo. If amiibo_keys.bin is already in the nfc folder, you can leave it there. Open Settings to see if the key is ready.
+New UID and Auto UID cannot change the ID unless that key file is on the SD card. If you already have the file, put `key_retail.bin` in the app folder `apps_data/flipper_amiibo` or in the Amiibo database folder `apps_data/flipper_amiibo/db`. Any subfolder under those trees is fine. Split keys work too: put `unfixed-info.bin` and `locked-secret.bin` in the same folder. If `amiibo_keys.bin` is already in the nfc folder, you can leave it there. Open Settings to see if the key is ready.
 
 ## Copyright & Trademark Notice
 
