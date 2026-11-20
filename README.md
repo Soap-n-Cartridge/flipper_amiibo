@@ -48,7 +48,22 @@ Open a saved Amiibo. The buttons are New UID, Emulate, and Del. Saving a favorit
 
 ## Amiibo Database
 
-This list is optional. It is for Amiibo files you put on the SD card yourself. You do not need it to use a scan or a favorite. Folders come first, then files, A to Z.
+This list is optional. It is for Amiibo files you put on the SD card yourself. You do not need it to use a scan or a favorite. Folders come first, then files, A to Z. A folder with no usable Amiibo tags in itself or any subfolder is hidden. Long folder names from the SD card are shown in full as far as the screen allows (with an ellipsis when they run long).
+
+### Short names like `LINK'S~1` / `GAKUTO~1`
+
+Official Flipper firmware only keeps long names that survive FatFS’s CP850 conversion. A curly apostrophe (`’`), a macron (`ō`), or other unsupported Unicode makes the Flipper fall back to the 8.3 short name. The app cannot recover the real long name on-device.
+
+Fix the library on your PC (or on the SD card while it is mounted), then copy it back:
+
+```powershell
+# Dry-run first:
+.\tools\fix-names-for-flipper.ps1 -Path "C:\Users\...\Downloads\Amiibo Full Set"
+# Then apply:
+.\tools\fix-names-for-flipper.ps1 -Path "C:\Users\...\Downloads\Amiibo Full Set" -Apply
+```
+
+Python equivalent: `python tools/fix-names-for-flipper.py "..." --apply`. The script turns `Link’s` → `Link's`, `Sōgetsu` → `Sogetsu`, and similar cases, so the Flipper can show the long name.
 
 A .bin file is listed only at 520, 540, or 572 bytes. An .nfc file is listed only when its header looks like an NTAG215 Amiibo. Other NFC dumps are skipped. One folder shows at most 200 names and then says the list was shortened. Favorites and Scanned Amiibos use the same file check, show 40 names, and say so when more are there.
 

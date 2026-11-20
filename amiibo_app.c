@@ -22,6 +22,7 @@
 #include <nfc/protocols/mf_ultralight/mf_ultralight.h>
 #include <nfc/protocols/mf_ultralight/mf_ultralight_poller.h>
 #include <notification/notification_messages.h>
+#include <stdint.h>
 #include <storage/storage.h>
 #include <string.h>
 #include <toolbox/path.h>
@@ -63,6 +64,8 @@ typedef enum {
  * the heap. Favorites and Scanned stay at FILE_MAX. */
 #define DIR_LIST_MAX 200
 #define MenuFileBase 400
+/* Match Flipper storage CLI / simply_remove_recursive: FatFS LFN max is 255. */
+#define FS_NAME_MAX 255
 
 #define APP_VERSION "1.2"
 
@@ -267,7 +270,15 @@ static const char HELP[] =
     "\n"
     "Folders are listed\n"
     "first, then files,\n"
-    "A to Z.\n"
+    "A to Z. Empty folders\n"
+    "are hidden.\n"
+    "\n"
+    "If a name looks like\n"
+    "LINK'S~1 or GAKUTO~1,\n"
+    "run the PC rename\n"
+    "script in tools/ on\n"
+    "your library, then\n"
+    "copy it to the SD.\n"
     "\n"
     "Only Amiibo .bin and\n"
     "NTAG215 .nfc files\n"
@@ -636,9 +647,9 @@ static bool walk_for_keys(App* app, const char* dir, uint8_t depth, KeyWalkBudge
     }
 
     FileInfo info;
-    char name[128];
-    char unfixed_name[128];
-    char locked_name[128];
+    char name[FS_NAME_MAX + 1];
+    char unfixed_name[FS_NAME_MAX + 1];
+    char locked_name[FS_NAME_MAX + 1];
     unfixed_name[0] = '\0';
     locked_name[0] = '\0';
 
@@ -1273,7 +1284,9 @@ static bool dump_ok(Storage* storage, const char* path, const char* name, const 
     return false;
 }
 
-static unsigned count_tags_in(App* app, const char* folder) {
+/* Count usable Amiibo tags under folder. stop_at ends early once reached
+ * (pass 1 for emptiness checks, UINT_MAX for a full count). */
+static unsigned count_tags_in_limited(App* app, const char* folder, unsigned stop_at) {
     unsigned count = 0;
     FuriString** subs = NULL;
     uint16_t sub_count = 0;
@@ -1281,8 +1294,9 @@ static unsigned count_tags_in(App* app, const char* folder) {
     File* dir = storage_file_alloc(app->storage);
     if(storage_dir_open(dir, folder)) {
         FileInfo info;
-        char name[128];
-        while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+        char name[FS_NAME_MAX + 1];
+        while(count < stop_at &&
+              storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
             if(name[0] == '\0' || name[0] == '.') continue;
             if(info.flags & FSF_DIRECTORY) {
                 if(sub_count == sub_cap) {
@@ -1303,11 +1317,22 @@ static unsigned count_tags_in(App* app, const char* folder) {
     }
     storage_file_free(dir);
     for(uint16_t i = 0; i < sub_count; i++) {
-        count += count_tags_in(app, furi_string_get_cstr(subs[i]));
+        if(count < stop_at) {
+            unsigned remain = stop_at - count;
+            count += count_tags_in_limited(app, furi_string_get_cstr(subs[i]), remain);
+        }
         furi_string_free(subs[i]);
     }
     free(subs);
     return count;
+}
+
+static unsigned count_tags_in(App* app, const char* folder) {
+    return count_tags_in_limited(app, folder, UINT_MAX);
+}
+
+static bool folder_has_tags(App* app, const char* folder) {
+    return count_tags_in_limited(app, folder, 1) > 0;
 }
 
 static void show_scan(App* app) {
@@ -1994,7 +2019,7 @@ static void show_file_list(App* app, bool saved) {
     File* dir = storage_file_alloc(app->storage);
     if(storage_dir_open(dir, folder)) {
         FileInfo info;
-        char name[128];
+        char name[FS_NAME_MAX + 1];
         FuriString* path = furi_string_alloc();
         while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
             if(info.flags & FSF_DIRECTORY) continue;
@@ -2489,11 +2514,19 @@ static void db_load(App* app) {
     }
     if(opened) {
         FileInfo info;
-        char name[128];
+        char name[FS_NAME_MAX + 1];
         while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
             if(name[0] == '\0' || name[0] == '.') continue;
             bool is_dir = (info.flags & FSF_DIRECTORY) != 0;
-            if(!is_dir) {
+            if(is_dir) {
+                /* Same rule as By Series: hide folders with no usable Amiibos
+                 * in themselves or any descendant. Early-exit count. */
+                FuriString* child = furi_string_alloc_printf(
+                    "%s/%s", furi_string_get_cstr(app->db_path), name);
+                bool has = folder_has_tags(app, furi_string_get_cstr(child));
+                furi_string_free(child);
+                if(!has) continue;
+            } else {
                 if(!ends_with_i(name, ".bin") && !ends_with_i(name, ".nfc")) continue;
                 FuriString* path = furi_string_alloc_printf(
                     "%s/%s", furi_string_get_cstr(app->db_path), name);
@@ -2901,7 +2934,7 @@ static void move_legacy_files(Storage* storage, const char* from, const char* to
         return;
     }
     FileInfo info;
-    char name[128];
+    char name[FS_NAME_MAX + 1];
     FuriString* src = furi_string_alloc();
     FuriString* dst = furi_string_alloc();
     while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
