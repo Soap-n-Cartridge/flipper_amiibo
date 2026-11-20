@@ -10,6 +10,7 @@
 #include <gui/gui.h>
 #include <gui/view.h>
 #include <gui/view_stack.h>
+#include <gui/modules/loading.h>
 #include <gui/modules/popup.h>
 #include <gui/modules/widget.h>
 #include <gui/view_dispatcher.h>
@@ -44,6 +45,7 @@ typedef enum {
     ViewCleanup,
     ViewNotice,
     ViewBlast,
+    ViewLoading,
 } ViewId;
 
 typedef enum {
@@ -66,6 +68,11 @@ typedef enum {
 #define MenuFileBase 400
 /* Match Flipper storage CLI / simply_remove_recursive: FatFS LFN max is 255. */
 #define FS_NAME_MAX 255
+/* Show the system Loading hourglass after this much DB work. */
+#define DB_BUSY_SHOW_MS 200
+/* Cap one recursive tag walk so a pathological SD tree cannot hang forever.
+ * Sized above a full Amiibo set (~1k dumps) plus folder entries. */
+#define COUNT_WALK_MAX_ENTRIES 20000
 
 #define APP_VERSION "1.2"
 
@@ -104,7 +111,11 @@ typedef struct {
     View* tag_buttons;
     ViewStack* tag_stack;
     Popup* popup;
+    Loading* loading;
     bool uid_confirm;
+    bool db_busy_active;
+    bool db_busy_shown;
+    uint32_t db_busy_started;
     FuriPubSub* input_pubsub;
     FuriPubSubSubscription* input_subscription;
     NotificationApp* notifications;
@@ -1284,9 +1295,39 @@ static bool dump_ok(Storage* storage, const char* path, const char* name, const 
     return false;
 }
 
+static void db_busy_begin(App* app) {
+    app->db_busy_active = true;
+    app->db_busy_shown = false;
+    app->db_busy_started = furi_get_tick();
+}
+
+static void db_busy_pulse(App* app) {
+    if(!app->db_busy_active) return;
+    if(app->db_busy_shown) return;
+    if(furi_get_tick() - app->db_busy_started < furi_ms_to_ticks(DB_BUSY_SHOW_MS)) return;
+    /* Hourglass from the system Loading view; elevate timers so it animates. */
+    furi_timer_set_thread_priority(FuriTimerThreadPriorityElevated);
+    view_dispatcher_switch_to_view(app->dispatcher, ViewLoading);
+    app->db_busy_shown = true;
+}
+
+static void db_busy_end(App* app) {
+    if(!app->db_busy_active) return;
+    if(app->db_busy_shown) {
+        furi_timer_set_thread_priority(FuriTimerThreadPriorityNormal);
+    }
+    app->db_busy_active = false;
+    app->db_busy_shown = false;
+}
+
 /* Count usable Amiibo tags under folder. stop_at ends early once reached
- * (pass 1 for emptiness checks, UINT_MAX for a full count). */
-static unsigned count_tags_in_limited(App* app, const char* folder, unsigned stop_at) {
+ * (pass 1 for emptiness checks, UINT_MAX for a full count). walked caps the
+ * number of directory entries visited in this one walk tree. */
+static unsigned count_tags_walk(
+    App* app,
+    const char* folder,
+    unsigned stop_at,
+    uint16_t* walked) {
     unsigned count = 0;
     FuriString** subs = NULL;
     uint16_t sub_count = 0;
@@ -1295,8 +1336,10 @@ static unsigned count_tags_in_limited(App* app, const char* folder, unsigned sto
     if(storage_dir_open(dir, folder)) {
         FileInfo info;
         char name[FS_NAME_MAX + 1];
-        while(count < stop_at &&
+        while(count < stop_at && *walked < COUNT_WALK_MAX_ENTRIES &&
               storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+            (*walked)++;
+            db_busy_pulse(app);
             if(name[0] == '\0' || name[0] == '.') continue;
             if(info.flags & FSF_DIRECTORY) {
                 if(sub_count == sub_cap) {
@@ -1317,14 +1360,19 @@ static unsigned count_tags_in_limited(App* app, const char* folder, unsigned sto
     }
     storage_file_free(dir);
     for(uint16_t i = 0; i < sub_count; i++) {
-        if(count < stop_at) {
+        if(count < stop_at && *walked < COUNT_WALK_MAX_ENTRIES) {
             unsigned remain = stop_at - count;
-            count += count_tags_in_limited(app, furi_string_get_cstr(subs[i]), remain);
+            count += count_tags_walk(app, furi_string_get_cstr(subs[i]), remain, walked);
         }
         furi_string_free(subs[i]);
     }
     free(subs);
     return count;
+}
+
+static unsigned count_tags_in_limited(App* app, const char* folder, unsigned stop_at) {
+    uint16_t walked = 0;
+    return count_tags_walk(app, folder, stop_at, &walked);
 }
 
 static unsigned count_tags_in(App* app, const char* folder) {
@@ -2516,6 +2564,7 @@ static void db_load(App* app) {
         FileInfo info;
         char name[FS_NAME_MAX + 1];
         while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+            db_busy_pulse(app);
             if(name[0] == '\0' || name[0] == '.') continue;
             bool is_dir = (info.flags & FSF_DIRECTORY) != 0;
             if(is_dir) {
@@ -2546,6 +2595,10 @@ static void db_load(App* app) {
 }
 
 static void show_database(App* app) {
+    /* Long SD walks (empty-folder filter + per-row counts) can take seconds on
+     * a full Amiibo set. Show the system hourglass once work runs past
+     * DB_BUSY_SHOW_MS so the UI does not look frozen. */
+    db_busy_begin(app);
     db_load(app);
     FuriString* title = furi_string_alloc();
     if(db_is_root(app)) {
@@ -2562,6 +2615,7 @@ static void show_database(App* app) {
     } else {
         if(app->db_index >= app->db_count) app->db_index = 0;
         for(uint16_t i = 0; i < app->db_count; i++) {
+            db_busy_pulse(app);
             FuriString* label = furi_string_alloc_set(app->db_names[i]);
             unsigned row_count = 0;
             bool folder = app->db_is_dir[i] != 0;
@@ -2582,6 +2636,7 @@ static void show_database(App* app) {
         }
     }
     list_select(app, app->db_count == 0 ? MenuEmpty : MenuFileBase + app->db_index);
+    db_busy_end(app);
     app->current = ViewDatabase;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
     if(app->list_cut) show_cut_notice(app, DIR_LIST_MAX);
@@ -3015,6 +3070,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_set_draw_callback(app->menu_view, menu_draw);
     view_set_input_callback(app->menu_view, menu_input);
     app->popup = popup_alloc();
+    app->loading = loading_alloc();
     app->menu_timer = furi_timer_alloc(menu_timer_cb, FuriTimerTypePeriodic, app);
     app->help_view = view_alloc();
     view_allocate_model(app->help_view, ViewModelTypeLocking, sizeof(PageModel));
@@ -3056,6 +3112,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_dispatcher_add_view(app->dispatcher, ViewNotice, popup_get_view(app->popup));
     view_dispatcher_add_view(app->dispatcher, ViewHelp, app->help_view);
     view_dispatcher_add_view(app->dispatcher, ViewAbout, app->about_view);
+    view_dispatcher_add_view(app->dispatcher, ViewLoading, loading_get_view(app->loading));
 
     view_dispatcher_set_tick_event_callback(app->dispatcher, app_tick, furi_ms_to_ticks(50));
     show_splash(app);
@@ -3079,6 +3136,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_dispatcher_remove_view(app->dispatcher, ViewNotice);
     view_dispatcher_remove_view(app->dispatcher, ViewHelp);
     view_dispatcher_remove_view(app->dispatcher, ViewAbout);
+    view_dispatcher_remove_view(app->dispatcher, ViewLoading);
     furi_timer_free(app->menu_timer);
     view_free(app->splash_view);
     view_free(app->cleanup_view);
@@ -3087,6 +3145,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_free(app->about_view);
     widget_free(app->widget);
     popup_free(app->popup);
+    loading_free(app->loading);
     with_view_model(
         app->list_view,
         ListModel * model,
