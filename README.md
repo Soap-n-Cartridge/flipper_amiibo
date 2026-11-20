@@ -48,7 +48,7 @@ Open a saved Amiibo. The buttons are New UID, Emulate, and Del. Saving a favorit
 
 ## Amiibo Database
 
-This list is optional. It is for Amiibo files you put on the SD card yourself. You do not need it to use a scan or a favorite. Folders come first, then files, A to Z.
+This list is optional. It is for Amiibo files you put on the SD card yourself. You do not need it to use a scan or a favorite. Folders come first, then files, A to Z. A folder with no usable Amiibo tags in itself or any subfolder is hidden. Long folder names from the SD card are shown in full as far as the screen allows (with an ellipsis when they run long).
 
 A .bin file is listed only at 520, 540, or 572 bytes. An .nfc file is listed only when its header looks like an NTAG215 Amiibo. Other NFC dumps are skipped. One folder shows at most 200 names and then says the list was shortened. Favorites and Scanned Amiibos use the same file check, show 40 names, and say so when more are there.
 
