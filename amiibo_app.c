@@ -184,6 +184,7 @@ typedef struct {
     bool playlist_on_air;
     uint8_t playlist_index;
     uint32_t playlist_list_index;
+    uint32_t playlist_last_advance;
     FuriString* playlist_paths[21];
     FuriString* playlist_root;
     uint8_t playlist_found;
@@ -2208,9 +2209,17 @@ static void playlist_finish_ui(App* app) {
     show_playlist_list(app);
 }
 
-/* Center / Next: leave current dump and transmit the next one. */
+/* Center / Next: leave current dump and transmit the next one.
+ * Debounce: widget Center + InputKeyOk pubsub both fire on one press. */
+#define PLAYLIST_ADVANCE_DEBOUNCE_MS 400
+
 static void playlist_advance(App* app) {
     if(!app->playlist_running) return;
+    uint32_t now = furi_get_tick();
+    if((now - app->playlist_last_advance) < furi_ms_to_ticks(PLAYLIST_ADVANCE_DEBOUNCE_MS)) {
+        return;
+    }
+    app->playlist_last_advance = now;
     playlist_cleanup_nfc(app);
     app->playlist_index++;
     if(!playlist_go_on_air(app)) playlist_finish_ui(app);
@@ -2231,6 +2240,7 @@ static void playlist_start(App* app) {
     app->playlist_index = 0;
     app->playlist_on_air = false;
     app->playlist_running = true;
+    app->playlist_last_advance = 0;
     if(!playlist_go_on_air(app)) {
         app_alert(app, "No dumps found", "Could not load\nany playlist dump.");
         playlist_finish_ui(app);
@@ -2797,14 +2807,12 @@ static void show_section(App* app, int index) {
 static void section_key(const void* message, void* context) {
     const InputEvent* event = message;
     App* app = context;
+    /* Playlist Next is handled only by the Center widget button (Short).
+     * Do not also map InputKeyOk here — that double-fires with the widget
+     * and skips every other dump. Back still aborts via this pubsub. */
     if(app->playlist_running && event->type == InputTypeShort) {
         if(event->key == InputKeyBack) {
             view_dispatcher_send_custom_event(app->dispatcher, EventPlaylistStop);
-            return;
-        }
-        if(event->key == InputKeyOk) {
-            view_dispatcher_send_custom_event(app->dispatcher, EventPlaylistNext);
-            return;
         }
         return;
     }
