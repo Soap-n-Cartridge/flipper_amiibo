@@ -43,6 +43,7 @@ typedef enum {
     ViewCleanup,
     ViewNotice,
     ViewBlast,
+    ViewPlaylist,
 } ViewId;
 
 typedef enum {
@@ -55,6 +56,7 @@ typedef enum {
     MenuDeleteScanned,
     MenuDeleteFavorites,
     MenuEmpty,
+    MenuPlaylistMk8,
 } MenuId;
 
 #define FILE_MAX 40
@@ -64,7 +66,21 @@ typedef enum {
 #define DIR_LIST_MAX 200
 #define MenuFileBase 400
 
-#define APP_VERSION "1.2"
+#define APP_VERSION "1.3"
+
+/* Carousel slots match gfx/carousel "Grid NN" numbers (0-based index = NN-1):
+ * 01 Database, 02 Favorites, 03 Scan, 04 Blast, 05 Playlist, 06 Settings,
+ * 07 Help, 08 About. */
+enum {
+    CarouselDatabase = 0,
+    CarouselFavorites = 1,
+    CarouselScan = 2,
+    CarouselBlast = 3,
+    CarouselPlaylist = 4,
+    CarouselSettings = 5,
+    CarouselHelp = 6,
+    CarouselAbout = 7,
+};
 
 typedef enum {
     UidFollowSetting,
@@ -132,6 +148,12 @@ typedef struct {
     uint32_t blast_phase_started;
     uint32_t blast_index;
     uint8_t blast_saved[AMIIBO_TAG_SIZE];
+    bool playlist_running;
+    bool playlist_on_air;
+    uint32_t playlist_phase_started;
+    uint8_t playlist_index;
+    uint8_t playlist_skip_note;
+    uint32_t playlist_list_index;
     uint8_t open_series;
     uint8_t series_ids[32];
     uint8_t series_other[32];
@@ -195,7 +217,24 @@ static const char HELP[] =
     "It does not save that\n"
     "ID. Any key stops.\n"
     "This needs the key\n"
-    "file.\n"
+    "file. A quiet click\n"
+    "plays when a new ID\n"
+    "goes on air.\n"
+    "\n"
+    "Amiibo Playlist\n"
+    "Runs a fixed list of\n"
+    "dumps from the Amiibo\n"
+    "Database folder. The\n"
+    "MK8 preset unlocks\n"
+    "all amiibo-gated Mii\n"
+    "costumes in Mario Kart\n"
+    "8 Deluxe. Each dump\n"
+    "is on for 1 second,\n"
+    "then a 2 second pause.\n"
+    "UIDs are not changed.\n"
+    "Back stops the run.\n"
+    "A missing dump is\n"
+    "skipped.\n"
     "\n"
     "Key\n"
     "The app cannot include\n"
@@ -408,9 +447,76 @@ static void show_about(App* app) {
 static void show_menu(App* app);
 static void show_tag(App* app);
 static void blast_stop(App* app);
+static void playlist_stop(App* app);
 static void show_database(App* app);
+static void show_playlist_list(App* app);
 static void widget_callback(GuiButtonType button, InputType type, void* context);
 static void submenu_callback(void* context, uint32_t index);
+
+/* Quiet click for Blast UID advances and Playlist dump advances.
+ * Forces speaker volume to the quietest non-muted level (0.1f). */
+static const NotificationMessage message_force_speaker_volume_min = {
+    .type = NotificationMessageTypeForceSpeakerVolumeSetting,
+    .data.forced_settings.speaker_volume = 0.1f,
+};
+
+static const NotificationSequence sequence_amiibo_min_click = {
+    &message_force_speaker_volume_min,
+    &message_click,
+    &message_delay_10,
+    &message_sound_off,
+    NULL,
+};
+
+static void amiibo_min_click(App* app) {
+    notification_message(app->notifications, &sequence_amiibo_min_click);
+}
+
+typedef struct {
+    const char* costume;
+    const char* rel_path;
+    const char* alt_path;
+} PlaylistEntry;
+
+/* Relative to apps_data/flipper_amiibo/db (Full Set layout). */
+static const PlaylistEntry MK8_PLAYLIST[] = {
+    {"Mario", "Super Smash Bros Amiibo/Mario.bin", NULL},
+    {"Luigi", "Super Smash Bros Amiibo/Luigi.bin", NULL},
+    {"Peach", "Super Smash Bros Amiibo/Peach.bin", NULL},
+    {"Yoshi", "Super Smash Bros Amiibo/Yoshi.bin", NULL},
+    {"Donkey Kong", "Super Smash Bros Amiibo/Donkey Kong.bin", NULL},
+    {"Link", "Super Smash Bros Amiibo/Link.bin", NULL},
+    {"Captain Falcon", "Super Smash Bros Amiibo/Captain Falcon.bin", NULL},
+    {"Kirby", "Super Smash Bros Amiibo/Kirby.bin", NULL},
+    {"Samus", "Super Smash Bros Amiibo/Samus.bin", NULL},
+    {"Fox", "Super Smash Bros Amiibo/Fox.bin", NULL},
+    {"Toad", "Super Mario Amiibo/Toad.bin", NULL},
+    {"Bowser", "Super Smash Bros Amiibo/Bowser.bin", NULL},
+    {"Wario", "Super Smash Bros Amiibo/Wario.bin", NULL},
+    {"Rosalina",
+     "Super Smash Bros Amiibo/Rosalina _ Luma.bin",
+     "Super Mario Amiibo/Rosalina.bin"},
+    {"Pikmin", "Super Smash Bros Amiibo/Olimar.bin", NULL},
+    {"Animal Crossing", "Super Smash Bros Amiibo/Villager.bin", NULL},
+    {"Mega Man", "Super Smash Bros Amiibo/Mega Man.bin", NULL},
+    {"PAC-MAN", "Super Smash Bros Amiibo/Pac-Man.bin", NULL},
+    {"Sonic", "Super Smash Bros Amiibo/Sonic.bin", NULL},
+    {"Splatoon", "Super Smash Bros Amiibo/Inkling Girl.bin", NULL},
+    {"Daisy", "Super Smash Bros Amiibo/Daisy.bin", NULL},
+};
+
+#define MK8_PLAYLIST_COUNT (sizeof(MK8_PLAYLIST) / sizeof(MK8_PLAYLIST[0]))
+#define PLAYLIST_SEND_MS 1000
+#define PLAYLIST_PAUSE_MS 2000
+#define PLAYLIST_SKIP_NOTE_MS 800
+
+static const char MK8_PLAYLIST_DESC[] =
+    "Unlocks all amiibo-\n"
+    "gated Mii costumes\n"
+    "in MK8 Deluxe\n"
+    "(21 suits).\n"
+    "OK starts. Back\n"
+    "cancels.";
 
 static bool ends_with_i(const char* text, const char* suffix) {
     size_t text_len = strlen(text);
@@ -1439,18 +1545,20 @@ static bool save_dump(App* app) {
     return true;
 }
 
-static bool load_selected(App* app) {
+static bool load_selected_quiet(App* app, bool alert) {
     const char* path = furi_string_get_cstr(app->path);
     bool ok = false;
-    if(ends_with_i(path, ".bin")) ok = read_bin(app, path);
-    else if(ends_with_i(path, ".nfc")) ok = read_nfc(app, path);
-    else {
-        app_alert(app, "Wrong file", "Choose a .bin\nor .nfc dump.");
+    if(ends_with_i(path, ".bin")) {
+        ok = read_bin(app, path);
+    } else if(ends_with_i(path, ".nfc")) {
+        ok = read_nfc(app, path);
+    } else {
+        if(alert) app_alert(app, "Wrong file", "Choose a .bin\nor .nfc dump.");
         return false;
     }
     if(!ok) {
         app->loaded = false;
-        app_alert(app, "Cannot load", "Need a 540-byte\nNTAG215 dump.");
+        if(alert) app_alert(app, "Cannot load", "Need a 540-byte\nNTAG215 dump.");
         return false;
     }
     app->loaded = true;
@@ -1458,6 +1566,10 @@ static bool load_selected(App* app) {
     app->figure_read = false;
     set_policy_from_path(app);
     return true;
+}
+
+static bool load_selected(App* app) {
+    return load_selected_quiet(app, true);
 }
 
 enum {
@@ -1470,6 +1582,7 @@ enum {
     EventTagNext = 231,
     EventFavNoted = 232,
     EventBlastStop = 233,
+    EventPlaylistStop = 234,
 };
 
 #define READ_WAIT_MS 5000
@@ -1589,6 +1702,7 @@ static void blast_show(App* app, bool on_air) {
 static bool blast_go_on_air(App* app) {
     if(!make_new_uid(app)) return false;
     pages_from_tag(app);
+    amiibo_min_click(app);
     app->nfc = nfc_alloc();
     const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
     app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
@@ -1645,10 +1759,180 @@ static void blast_tick(App* app) {
     }
 }
 
+static bool playlist_resolve_path(App* app, uint8_t index, FuriString* out) {
+    if(index >= MK8_PLAYLIST_COUNT) return false;
+    const PlaylistEntry* entry = &MK8_PLAYLIST[index];
+    furi_string_printf(out, "%s/%s", APP_DATA_PATH("db"), entry->rel_path);
+    if(storage_file_exists(app->storage, furi_string_get_cstr(out))) return true;
+    if(entry->alt_path) {
+        furi_string_printf(out, "%s/%s", APP_DATA_PATH("db"), entry->alt_path);
+        if(storage_file_exists(app->storage, furi_string_get_cstr(out))) return true;
+    }
+    return false;
+}
+
+static void playlist_show(App* app, bool on_air, const char* note) {
+    const PlaylistEntry* entry = &MK8_PLAYLIST[app->playlist_index];
+    if(note && note[0]) {
+        furi_string_printf(
+            app->info,
+            "\e#Playlist\n%u/%u %s\n%s\nBack stops",
+            (unsigned)(app->playlist_index + 1),
+            (unsigned)MK8_PLAYLIST_COUNT,
+            entry->costume,
+            note);
+    } else if(on_air) {
+        furi_string_printf(
+            app->info,
+            "\e#Playlist\n%u/%u %s\nOn air\nBack stops",
+            (unsigned)(app->playlist_index + 1),
+            (unsigned)MK8_PLAYLIST_COUNT,
+            entry->costume);
+    } else {
+        furi_string_printf(
+            app->info,
+            "\e#Playlist\n%u/%u %s\nPause\nBack stops",
+            (unsigned)(app->playlist_index + 1),
+            (unsigned)MK8_PLAYLIST_COUNT,
+            entry->costume);
+    }
+    widget_reset(app->widget);
+    widget_add_text_scroll_element(app->widget, 0, 0, 128, 64, furi_string_get_cstr(app->info));
+    app->current = ViewEmulate;
+    view_dispatcher_switch_to_view(app->dispatcher, ViewTag);
+    if(on_air) notification_message(app->notifications, &sequence_blink_start_magenta);
+}
+
+static bool playlist_go_on_air(App* app) {
+    while(app->playlist_index < MK8_PLAYLIST_COUNT) {
+        FuriString* path = furi_string_alloc();
+        bool found = playlist_resolve_path(app, app->playlist_index, path);
+        if(!found) {
+            playlist_show(app, false, "Skip: missing");
+            app->playlist_skip_note = 1;
+            app->playlist_on_air = false;
+            app->playlist_phase_started = furi_get_tick();
+            furi_string_free(path);
+            return true;
+        }
+        furi_string_set(app->path, path);
+        furi_string_free(path);
+        if(!load_selected_quiet(app, false)) {
+            playlist_show(app, false, "Skip: bad dump");
+            app->playlist_skip_note = 1;
+            app->playlist_on_air = false;
+            app->playlist_phase_started = furi_get_tick();
+            return true;
+        }
+        app->policy = UidForceOff;
+        app->figure_read = true;
+        pages_from_tag(app);
+        amiibo_min_click(app);
+        app->nfc = nfc_alloc();
+        const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
+        app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
+        nfc_listener_start(app->listener, NULL, NULL);
+        app->emulating = true;
+        app->playlist_on_air = true;
+        app->playlist_skip_note = 0;
+        app->playlist_phase_started = furi_get_tick();
+        playlist_show(app, true, NULL);
+        return true;
+    }
+    return false;
+}
+
+static void playlist_pause(App* app) {
+    stop_listener(app, false, false);
+    app->playlist_on_air = false;
+    app->playlist_phase_started = furi_get_tick();
+    playlist_show(app, false, NULL);
+}
+
+static void playlist_stop(App* app) {
+    if(!app->playlist_running) return;
+    app->playlist_running = false;
+    app->playlist_on_air = false;
+    app->playlist_skip_note = 0;
+    if(app->emulating) stop_listener(app, false, false);
+    app->loaded = false;
+    show_playlist_list(app);
+}
+
+static void playlist_finish(App* app) {
+    app->playlist_running = false;
+    app->playlist_on_air = false;
+    app->playlist_skip_note = 0;
+    if(app->emulating) stop_listener(app, false, false);
+    app->loaded = false;
+    app_alert(app, "Playlist done", "All MK8 costumes\nwere sent.");
+    show_playlist_list(app);
+}
+
+static void playlist_start(App* app) {
+    app->playlist_index = 0;
+    app->playlist_skip_note = 0;
+    app->playlist_running = true;
+    if(!playlist_go_on_air(app)) {
+        playlist_finish(app);
+    }
+}
+
+static void playlist_tick(App* app) {
+    if(!app->playlist_running) return;
+    if(app->playlist_skip_note) {
+        if((furi_get_tick() - app->playlist_phase_started) <
+           furi_ms_to_ticks(PLAYLIST_SKIP_NOTE_MS)) {
+            return;
+        }
+        app->playlist_skip_note = 0;
+        app->playlist_index++;
+        if(app->playlist_index >= MK8_PLAYLIST_COUNT) {
+            playlist_finish(app);
+            return;
+        }
+        if(!playlist_go_on_air(app)) playlist_finish(app);
+        return;
+    }
+    uint32_t phase_ms = app->playlist_on_air ? PLAYLIST_SEND_MS : PLAYLIST_PAUSE_MS;
+    if((furi_get_tick() - app->playlist_phase_started) < furi_ms_to_ticks(phase_ms)) return;
+    if(app->playlist_on_air) {
+        playlist_pause(app);
+        return;
+    }
+    app->playlist_index++;
+    if(app->playlist_index >= MK8_PLAYLIST_COUNT) {
+        playlist_finish(app);
+        return;
+    }
+    if(!playlist_go_on_air(app)) playlist_finish(app);
+}
+
+static bool playlist_confirm_start(App* app) {
+    DialogMessage* message = dialog_message_alloc();
+    dialog_message_set_header(message, "MK8 Mii Costumes", 64, 0, AlignCenter, AlignTop);
+    dialog_message_set_text(message, MK8_PLAYLIST_DESC, 64, 30, AlignCenter, AlignCenter);
+    dialog_message_set_buttons(message, NULL, "OK", NULL);
+    DialogMessageButton result = dialog_message_show(app->dialogs, message);
+    dialog_message_free(message);
+    return result == DialogMessageButtonCenter;
+}
+
+static void show_playlist_list(App* app) {
+    list_reset(app);
+    list_header(app, "Amiibo Playlist", 0, false);
+    list_add(app, "MK8 - All Mii Costumes", (unsigned)MK8_PLAYLIST_COUNT, true, MenuPlaylistMk8);
+    if(app->playlist_list_index != MenuPlaylistMk8) app->playlist_list_index = MenuPlaylistMk8;
+    list_select(app, app->playlist_list_index);
+    app->current = ViewPlaylist;
+    view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
+}
+
 static void app_tick(void* context) {
     App* app = context;
     if(app->current == ViewCleanup) cleanup_hold_tick(app);
     if(app->blasting) blast_tick(app);
+    if(app->playlist_running) playlist_tick(app);
     if(app->current != ViewSplash) return;
     uint32_t frame_ticks = furi_ms_to_ticks(SPLASH_FRAME_MS);
     uint32_t elapsed = furi_get_tick() - app->splash_started;
@@ -2127,21 +2411,23 @@ static void carousel_open(App* app) {
     MenuModel* model = view_get_model(app->menu_view);
     uint8_t index = model->index % MENU_ICON_COUNT;
     view_commit_model(app->menu_view, false);
-    if(index == 0) {
+    if(index == CarouselDatabase) {
         show_database(app);
-    } else if(index == 1) {
+    } else if(index == CarouselFavorites) {
         app->blast_list = false;
         app->in_series = false;
         show_file_list(app, true);
-    } else if(index == 2) {
+    } else if(index == CarouselScan) {
         show_scan(app);
-    } else if(index == 3) {
+    } else if(index == CarouselBlast) {
         app->blast_list = true;
         app->in_series = false;
         show_file_list(app, true);
-    } else if(index == 4) {
+    } else if(index == CarouselPlaylist) {
+        show_playlist_list(app);
+    } else if(index == CarouselSettings) {
         show_settings(app);
-    } else if(index == 5) {
+    } else if(index == CarouselHelp) {
         app->current = ViewHelp;
         view_dispatcher_switch_to_view(app->dispatcher, ViewHelp);
     } else {
@@ -2150,13 +2436,14 @@ static void carousel_open(App* app) {
 }
 
 static int section_of(App* app) {
-    if(app->current == ViewDatabase) return 0;
-    if(app->current == ViewSaved) return 1;
-    if(app->current == ViewMy) return 2;
-    if(app->current == ViewBlast) return 3;
-    if(app->current == ViewSettings) return 4;
-    if(app->current == ViewHelp) return 5;
-    if(app->current == ViewAbout) return 6;
+    if(app->current == ViewDatabase) return CarouselDatabase;
+    if(app->current == ViewSaved) return CarouselFavorites;
+    if(app->current == ViewMy) return CarouselScan;
+    if(app->current == ViewBlast) return CarouselBlast;
+    if(app->current == ViewPlaylist) return CarouselPlaylist;
+    if(app->current == ViewSettings) return CarouselSettings;
+    if(app->current == ViewHelp) return CarouselHelp;
+    if(app->current == ViewAbout) return CarouselAbout;
     return -1;
 }
 
@@ -2179,6 +2466,11 @@ static void section_key(const void* message, void* context) {
         view_dispatcher_send_custom_event(app->dispatcher, EventBlastStop);
         return;
     }
+    if(app->playlist_running && event->type == InputTypeShort && event->key == InputKeyBack) {
+        view_dispatcher_send_custom_event(app->dispatcher, EventPlaylistStop);
+        return;
+    }
+    if(app->playlist_running) return;
     if(event->type != InputTypeShort && event->type != InputTypeRepeat) return;
     if(event->key == InputKeyLeft || event->key == InputKeyRight) {
         if(event->type != InputTypeShort) return;
@@ -2532,6 +2824,7 @@ static void submenu_callback(void* context, uint32_t index) {
     else if(app->current == ViewMy) app->my_index = index;
     else if(app->current == ViewSaved) app->saved_index = index;
     else if(app->current == ViewBlast) app->blast_index = index;
+    else if(app->current == ViewPlaylist) app->playlist_list_index = index;
     else if(app->current == ViewUnsaved) app->unsaved_index = index;
     else if(app->current == ViewDatabase && index >= MenuFileBase) app->db_index = index - MenuFileBase;
     view_dispatcher_send_custom_event(app->dispatcher, index);
@@ -2547,9 +2840,13 @@ static bool custom_event(void* context, uint32_t event) {
         blast_stop(app);
         return true;
     }
+    if(event == EventPlaylistStop) {
+        playlist_stop(app);
+        return true;
+    }
     if(event == EventSectionLeft || event == EventSectionRight) {
         int section = section_of(app);
-        if(!app->reading && !app->emulating && section >= 0) {
+        if(!app->reading && !app->emulating && !app->playlist_running && section >= 0) {
             show_section(app, section + (event == EventSectionRight ? 1 : -1));
         }
         return true;
@@ -2586,11 +2883,15 @@ static bool custom_event(void* context, uint32_t event) {
             blast_stop(app);
             return true;
         }
+        if(app->playlist_running) {
+            playlist_stop(app);
+            return true;
+        }
         stop_emulate(app);
         if(!start_emulate(app, true)) show_tag(app);
         return true;
     }
-    if(app->emulating) return true;
+    if(app->emulating || app->playlist_running) return true;
 
     if(app->current == ViewDatabase && event >= MenuFileBase &&
        event < (uint32_t)MenuFileBase + app->db_count) {
@@ -2601,15 +2902,22 @@ static bool custom_event(void* context, uint32_t event) {
         open_listed(app, (uint8_t)(event - MenuFileBase));
         return true;
     }
-    if(event == MenuEmpty) {
+    if(event == MenuPlaylistMk8) {
+        if(playlist_confirm_start(app)) playlist_start(app);
+        else show_playlist_list(app);
+    } else if(event == MenuEmpty) {
         if(app->current == ViewDatabase) db_up(app);
         else if(app->sort_series && app->in_series &&
                 (app->current == ViewSaved || app->current == ViewBlast ||
                  app->current == ViewUnsaved)) {
             app->in_series = false;
             show_file_list(app, app->current != ViewUnsaved);
-        } else if(app->current == ViewSaved || app->current == ViewBlast) show_menu(app);
-        else show_scan(app);
+        } else if(app->current == ViewSaved || app->current == ViewBlast ||
+                  app->current == ViewPlaylist) {
+            show_menu(app);
+        } else {
+            show_scan(app);
+        }
     } else if(event == MenuUnsaved) {
         app->in_series = false;
         show_file_list(app, false);
@@ -2671,6 +2979,10 @@ static bool back_event(void* context) {
         blast_stop(app);
         return true;
     }
+    if(app->playlist_running) {
+        playlist_stop(app);
+        return true;
+    }
     if(app->emulating || app->current == ViewEmulate) {
         stop_emulate(app);
         if(app->origin == OriginSaved || app->origin == OriginUnsaved) save_dump(app);
@@ -2683,6 +2995,10 @@ static bool back_event(void* context) {
     }
     if(app->current == ViewDatabase) {
         db_up(app);
+        return true;
+    }
+    if(app->current == ViewPlaylist) {
+        show_menu(app);
         return true;
     }
     if(app->current == ViewSaved || app->current == ViewBlast) {

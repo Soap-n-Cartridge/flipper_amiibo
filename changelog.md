@@ -1,3 +1,8 @@
+v1.3:
+Amiibo Playlist is a new main-menu picture after Amiibo Blast. It lists one built-in preset, MK8 - All Mii Costumes. That preset walks 21 dumps under the Amiibo Database folder to unlock every amiibo-gated Mii costume in Mario Kart 8 Deluxe. A short description shows before the run. Each dump is on for 1 second, then a 2 second pause. UIDs are left alone. Back stops and returns to the playlist list. A missing or bad dump is skipped with a short on-screen note so one bad path does not end the whole run. Paths assume a Full Set layout under apps_data/flipper_amiibo/db. Rosalina also tries Super Mario Amiibo/Rosalina.bin if the Smash name is missing.
+
+A quiet click at minimum speaker volume plays when Amiibo Blast puts a new UID on air, and when Playlist starts transmitting the next dump.
+
 v1.2:
 Settings can delete scanned Amiibos or Favorites. Each one names what will be removed and asks you to hold Up for 2 seconds. The downloaded library on the SD card stays. Deleting one Amiibo you have open still asks first.
 
