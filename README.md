@@ -24,7 +24,7 @@ The main menu is a row of pictures. Left and Right move. OK opens one. Back retu
 2. **Favorites** keeps copies of Amiibos you want to use again.
 3. **Scan Amiibos** reads a real Amiibo.
 4. **Amiibo Blast** lists the same Amiibos as Favorites. Blast sends a new ID for 1 second, pauses 2 seconds, and repeats. It does not save that ID. Back ends the run. An optional click plays when each new ID goes on air (level in Settings).
-5. **Amiibo Playlist** runs a built-in list of dumps from the Amiibo Database folder. The MK8 preset unlocks all amiibo-gated Mii costumes in Mario Kart 8 Deluxe. Each dump stays on air until you press Next; Back ends the run; missing dumps are skipped; UIDs are unchanged.
+5. **Amiibo Playlist** runs a built-in list of dumps from the Amiibo Database folder. The MK8 preset unlocks all amiibo-gated Mii costumes in Mario Kart 8 Deluxe. Each dump stays on air until you press Next; Back ends the run; missing dumps stay on their slot as Missing dump; UIDs are unchanged.
 6. **Settings** shows the app version, Auto UID, whether the key file is ready, Sort lists, Click volume (Off / Low / Med / High / Max; default Med; each change plays a test click for Blast), and delete options for Favorites and Scanned Amiibos.
 7. **Help** explains the steps on the Flipper.
 8. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. It also says the app is open source and written by Soap-n-Cartridge. The app does not own Amiibo or Nintendo content.

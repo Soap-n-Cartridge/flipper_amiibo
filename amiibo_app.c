@@ -575,8 +575,11 @@ static const PlaylistEntry MK8_PLAYLIST[] = {
     {"Mega Man", "Super Smash Bros Amiibo/Mega Man.bin", NULL},
     {"PAC-MAN", "Super Smash Bros Amiibo/Pac-Man.bin", NULL},
     {"Sonic", "Super Smash Bros Amiibo/Sonic.bin", NULL},
-    {"Splatoon", "Super Smash Bros Amiibo/Inkling Girl.bin", NULL},
-    {"Daisy", "Super Smash Bros Amiibo/Daisy.bin", NULL},
+    /* Full Set may use Smash Inkling Girl, plain Inkling, or Splatoon-series dumps. */
+    {"Splatoon",
+     "Super Smash Bros Amiibo/Inkling Girl.bin",
+     "Splatoon Amiibo/Inkling Girl.bin"},
+    {"Daisy", "Super Smash Bros Amiibo/Daisy.bin", "Super Mario Amiibo/Daisy.bin"},
 };
 
 #define MK8_PLAYLIST_COUNT (sizeof(MK8_PLAYLIST) / sizeof(MK8_PLAYLIST[0]))
@@ -2086,10 +2089,22 @@ static bool playlist_resolve_into(App* app, uint8_t index, const char* root, Fur
     if(playlist_try_rel(app, root, entry->rel_path, out)) return true;
     if(playlist_try_rel(app, root, entry->alt_path, out)) return true;
     /* AmiiboDB-style Smash Rosalina (underscore) if & / Super Mario miss. */
-    if(index < MK8_PLAYLIST_COUNT && entry->costume &&
-       strcmp(entry->costume, "Rosalina") == 0) {
+    if(entry->costume && strcmp(entry->costume, "Rosalina") == 0) {
         if(playlist_try_rel(app, root, "Super Smash Bros Amiibo/Rosalina _ Luma.bin", out)) {
             return true;
+        }
+    }
+    /* Splatoon costume: Smash Inkling / Splatoon-series aliases. */
+    if(entry->costume && strcmp(entry->costume, "Splatoon") == 0) {
+        static const char* const splatoon_alts[] = {
+            "Super Smash Bros Amiibo/Inkling.bin",
+            "Splatoon Amiibo/Callie.bin",
+            "Splatoon Amiibo/Marie.bin",
+            "Splatoon Amiibo/Inkling Boy.bin",
+            "Splatoon Amiibo/Inkling Squid.bin",
+        };
+        for(size_t i = 0; i < COUNT_OF(splatoon_alts); i++) {
+            if(playlist_try_rel(app, root, splatoon_alts[i], out)) return true;
         }
     }
     return false;
@@ -2161,21 +2176,24 @@ static void playlist_cleanup_nfc(App* app) {
 static void playlist_finish_ui(App* app);
 static bool playlist_go_on_air(App* app);
 
-/* Find next loadable dump at or after *index. Returns false if none left. */
-static bool playlist_find_loadable(App* app, uint8_t* index) {
-    while(*index < MK8_PLAYLIST_COUNT) {
-        if(app->playlist_paths[*index]) {
-            furi_string_set(app->path, app->playlist_paths[*index]);
-            if(load_selected_quiet(app, false)) return true;
-        }
-        (*index)++;
-    }
-    return false;
-}
-
+/* Load exactly playlist_index — never walk past a missing slot.
+ * Missing/bad dumps show "Missing dump" and wait for Next so numbers stay 1..21. */
 static bool playlist_go_on_air(App* app) {
     if(!app->playlist_running) return false;
-    if(!playlist_find_loadable(app, &app->playlist_index)) return false;
+    if(app->playlist_index >= MK8_PLAYLIST_COUNT) return false;
+
+    bool loaded = false;
+    if(app->playlist_paths[app->playlist_index]) {
+        furi_string_set(app->path, app->playlist_paths[app->playlist_index]);
+        loaded = load_selected_quiet(app, false);
+    }
+
+    if(!loaded) {
+        app->loaded = false;
+        app->playlist_on_air = false;
+        playlist_show(app, "Missing dump");
+        return true;
+    }
 
     app->policy = UidForceOff;
     app->figure_read = true;
@@ -2210,7 +2228,8 @@ static void playlist_finish_ui(App* app) {
 }
 
 /* Center / Next: leave current dump and transmit the next one.
- * Debounce: widget Center + InputKeyOk pubsub both fire on one press. */
+ * Debounce: widget Center + InputKeyOk pubsub both fire on one press.
+ * Sequence: indices 0..20 (UI 1..21), then Next finishes — never skips a slot. */
 #define PLAYLIST_ADVANCE_DEBOUNCE_MS 400
 
 static void playlist_advance(App* app) {
@@ -2221,6 +2240,10 @@ static void playlist_advance(App* app) {
     }
     app->playlist_last_advance = now;
     playlist_cleanup_nfc(app);
+    if(app->playlist_index >= MK8_PLAYLIST_COUNT - 1) {
+        playlist_finish_ui(app);
+        return;
+    }
     app->playlist_index++;
     if(!playlist_go_on_air(app)) playlist_finish_ui(app);
 }
