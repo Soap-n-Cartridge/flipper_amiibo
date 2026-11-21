@@ -583,10 +583,10 @@ static const PlaylistEntry MK8_PLAYLIST[] = {
 
 _Static_assert(MK8_PLAYLIST_COUNT == MK8_PLAYLIST_MAX, "playlist size mismatch");
 
-/* Keep short: DialogMessage header + OK leave ~3 FontSecondary lines. */
-static const char MK8_PLAYLIST_DESC[] =
-    "21 gated Mii suits.\n"
-    "Next advances.\n"
+/* Generic confirm body (preset name is the dialog header). Keep short for 128x64. */
+static const char PLAYLIST_CONFIRM_DESC[] =
+    "Center emulates this\n"
+    "Amiibo, then Next.\n"
     "Back exits.";
 
 static bool ends_with_i(const char* text, const char* suffix) {
@@ -2239,10 +2239,9 @@ static void playlist_start(App* app) {
 
 static bool playlist_confirm_start(App* app) {
     DialogMessage* message = dialog_message_alloc();
-    /* Header at top; body AlignTop under it so lines do not overlap header
-     * or the OK button. Back dismisses without starting. */
-    dialog_message_set_header(message, "MK8 Mii Costumes", 64, 0, AlignCenter, AlignTop);
-    dialog_message_set_text(message, MK8_PLAYLIST_DESC, 64, 20, AlignCenter, AlignTop);
+    /* Preset name as header; generic body (no game-specific copy). */
+    dialog_message_set_header(message, "MK8 - All Mii Costumes", 64, 0, AlignCenter, AlignTop);
+    dialog_message_set_text(message, PLAYLIST_CONFIRM_DESC, 64, 20, AlignCenter, AlignTop);
     dialog_message_set_buttons(message, NULL, "OK", NULL);
     DialogMessageButton result = dialog_message_show(app->dialogs, message);
     dialog_message_free(message);
