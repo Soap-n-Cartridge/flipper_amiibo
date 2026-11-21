@@ -575,9 +575,9 @@ static const PlaylistEntry MK8_PLAYLIST[] = {
     {"Mega Man", "Super Smash Bros Amiibo/Mega Man.bin", NULL},
     {"PAC-MAN", "Super Smash Bros Amiibo/Pac-Man.bin", NULL},
     {"Sonic", "Super Smash Bros Amiibo/Sonic.bin", NULL},
-    /* Full Set may use Smash Inkling Girl, plain Inkling, or Splatoon-series dumps. */
+    /* David's SD: Smash dump is Inkling.bin (no "Girl"); Inkling Girl lives under Splatoon. */
     {"Splatoon",
-     "Super Smash Bros Amiibo/Inkling Girl.bin",
+     "Super Smash Bros Amiibo/Inkling.bin",
      "Splatoon Amiibo/Inkling Girl.bin"},
     {"Daisy", "Super Smash Bros Amiibo/Daisy.bin", "Super Mario Amiibo/Daisy.bin"},
 };
@@ -2094,10 +2094,12 @@ static bool playlist_resolve_into(App* app, uint8_t index, const char* root, Fur
             return true;
         }
     }
-    /* Splatoon costume: Smash Inkling / Splatoon-series aliases. */
+    /* Splatoon costume: other Full Set / AmiiboDB names if primary+alt miss. */
     if(entry->costume && strcmp(entry->costume, "Splatoon") == 0) {
         static const char* const splatoon_alts[] = {
-            "Super Smash Bros Amiibo/Inkling.bin",
+            "Super Smash Bros Amiibo/Inkling Girl.bin",
+            "Splatoon Amiibo/Inkling Girl (Lime Green).bin",
+            "Splatoon Amiibo/Inkling Girl (Neon Pink).bin",
             "Splatoon Amiibo/Callie.bin",
             "Splatoon Amiibo/Marie.bin",
             "Splatoon Amiibo/Inkling Boy.bin",
