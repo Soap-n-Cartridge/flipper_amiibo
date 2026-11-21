@@ -538,8 +538,9 @@ static const PlaylistEntry MK8_PLAYLIST[] = {
     {"Toad", "Super Mario Amiibo/Toad.bin", NULL},
     {"Bowser", "Super Smash Bros Amiibo/Bowser.bin", NULL},
     {"Wario", "Super Smash Bros Amiibo/Wario.bin", NULL},
+    /* On David's Full Set: Smash uses "Rosalina & Luma.bin" (not "_"). */
     {"Rosalina",
-     "Super Smash Bros Amiibo/Rosalina _ Luma.bin",
+     "Super Smash Bros Amiibo/Rosalina & Luma.bin",
      "Super Mario Amiibo/Rosalina.bin"},
     {"Pikmin", "Super Smash Bros Amiibo/Olimar.bin", NULL},
     {"Animal Crossing", "Super Smash Bros Amiibo/Villager.bin", NULL},
@@ -1883,6 +1884,13 @@ static bool playlist_resolve_into(App* app, uint8_t index, const char* root, Fur
     const PlaylistEntry* entry = &MK8_PLAYLIST[index];
     if(playlist_try_rel(app, root, entry->rel_path, out)) return true;
     if(playlist_try_rel(app, root, entry->alt_path, out)) return true;
+    /* AmiiboDB-style Smash Rosalina (underscore) if & / Super Mario miss. */
+    if(index < MK8_PLAYLIST_COUNT && entry->costume &&
+       strcmp(entry->costume, "Rosalina") == 0) {
+        if(playlist_try_rel(app, root, "Super Smash Bros Amiibo/Rosalina _ Luma.bin", out)) {
+            return true;
+        }
+    }
     return false;
 }
 
