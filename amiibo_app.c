@@ -347,6 +347,9 @@ static const char HELP[] =
     "High for Blast and\n"
     "Playlist clicks.\n"
     "Med is the default.\n"
+    "Changing it plays a\n"
+    "test click at that\n"
+    "level.\n"
     "\n"
     "Delete Scanned Amiibos\n"
     "removes scans only.\n"
@@ -2980,6 +2983,7 @@ static bool custom_event(void* context, uint32_t event) {
     } else if(event == MenuClickVol) {
         app->click_vol = click_volume_next(app->click_vol);
         save_settings(app);
+        amiibo_transmit_click(app);
         show_settings(app);
     } else if(event == MenuKeys) {
         if(app->keys_loaded) {
