@@ -53,11 +53,19 @@ typedef enum {
     MenuAuto,
     MenuKeys,
     MenuSort,
+    MenuClickVol,
     MenuDeleteScanned,
     MenuDeleteFavorites,
     MenuEmpty,
     MenuPlaylistMk8,
 } MenuId;
+
+typedef enum {
+    ClickVolOff = 0,
+    ClickVolLow = 1,
+    ClickVolMed = 2,
+    ClickVolHigh = 3,
+} ClickVolume;
 
 #define FILE_MAX 40
 /* One database folder keeps this many names. Each name is stored twice (the
@@ -137,6 +145,7 @@ typedef struct {
     bool dirty;
     bool auto_uid;
     bool sort_series;
+    ClickVolume click_vol;
     bool list_cut;
     bool cut_notice;
     ViewId notice_return;
@@ -217,9 +226,10 @@ static const char HELP[] =
     "It does not save that\n"
     "ID. Any key stops.\n"
     "This needs the key\n"
-    "file. A quiet click\n"
-    "plays when a new ID\n"
-    "goes on air.\n"
+    "file. A click can\n"
+    "play when a new ID\n"
+    "goes on air. Set the\n"
+    "level in Settings.\n"
     "\n"
     "Amiibo Playlist\n"
     "Runs a fixed list of\n"
@@ -331,6 +341,12 @@ static const char HELP[] =
     "Unsorted or By Series\n"
     "for Favorites and\n"
     "Scanned Amiibos.\n"
+    "\n"
+    "Click volume sets\n"
+    "Off, Low, Med, or\n"
+    "High for Blast and\n"
+    "Playlist clicks.\n"
+    "Med is the default.\n"
     "\n"
     "Delete Scanned Amiibos\n"
     "removes scans only.\n"
@@ -453,23 +469,43 @@ static void show_playlist_list(App* app);
 static void widget_callback(GuiButtonType button, InputType type, void* context);
 static void submenu_callback(void* context, uint32_t index);
 
-/* Quiet click for Blast UID advances and Playlist dump advances.
- * Forces speaker volume to the quietest non-muted level (0.1f). */
-static const NotificationMessage message_force_speaker_volume_min = {
+/* Transmit click for Blast UID advances and Playlist dump advances.
+ * Volume comes from Settings (Off / Low / Med / High). Default is Med. */
+static NotificationMessage message_force_speaker_volume_click = {
     .type = NotificationMessageTypeForceSpeakerVolumeSetting,
     .data.forced_settings.speaker_volume = 0.1f,
 };
 
-static const NotificationSequence sequence_amiibo_min_click = {
-    &message_force_speaker_volume_min,
+static const NotificationSequence sequence_amiibo_click = {
+    &message_force_speaker_volume_click,
     &message_click,
     &message_delay_10,
     &message_sound_off,
     NULL,
 };
 
-static void amiibo_min_click(App* app) {
-    notification_message(app->notifications, &sequence_amiibo_min_click);
+static float click_volume_level(ClickVolume level) {
+    if(level == ClickVolMed) return 0.5f;
+    if(level == ClickVolHigh) return 1.0f;
+    return 0.1f; /* Low — former fixed minimum */
+}
+
+static const char* click_volume_label(ClickVolume level) {
+    if(level == ClickVolOff) return "Click volume: Off";
+    if(level == ClickVolMed) return "Click volume: Med";
+    if(level == ClickVolHigh) return "Click volume: High";
+    return "Click volume: Low";
+}
+
+static ClickVolume click_volume_next(ClickVolume level) {
+    return (ClickVolume)(((unsigned)level + 1u) % 4u);
+}
+
+static void amiibo_transmit_click(App* app) {
+    if(app->click_vol == ClickVolOff) return;
+    message_force_speaker_volume_click.data.forced_settings.speaker_volume =
+        click_volume_level(app->click_vol);
+    notification_message(app->notifications, &sequence_amiibo_click);
 }
 
 typedef struct {
@@ -621,14 +657,19 @@ static void save_settings(App* app);
 static void load_settings(App* app) {
     app->auto_uid = true;
     app->sort_series = false;
+    app->click_vol = ClickVolMed;
     File* file = storage_file_alloc(app->storage);
     if(storage_file_open(file, APP_DATA_PATH("auto_uid"), FSAM_READ, FSOM_OPEN_EXISTING)) {
-        char value[3];
+        char value[4];
         size_t read = storage_file_read(file, value, sizeof(value));
         if(read >= 1) app->auto_uid = value[0] != '0';
         if(read >= 2) app->sort_series = value[1] == '1';
+        if(read >= 3) {
+            unsigned level = (unsigned)(value[2] - '0');
+            if(level <= (unsigned)ClickVolHigh) app->click_vol = (ClickVolume)level;
+        }
         storage_file_close(file);
-        if(read > 2) save_settings(app);
+        if(read != 3) save_settings(app);
     }
     storage_file_free(file);
 }
@@ -636,9 +677,10 @@ static void load_settings(App* app) {
 static void save_settings(App* app) {
     File* file = storage_file_alloc(app->storage);
     if(storage_file_open(file, APP_DATA_PATH("auto_uid"), FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        char value[2];
+        char value[3];
         value[0] = app->auto_uid ? '1' : '0';
         value[1] = app->sort_series ? '1' : '0';
+        value[2] = (char)('0' + (unsigned)app->click_vol);
         storage_file_write(file, value, sizeof(value));
         storage_file_close(file);
     }
@@ -1286,6 +1328,7 @@ static void show_settings(App* app) {
         0,
         false,
         MenuSort);
+    list_add(app, click_volume_label(app->click_vol), 0, false, MenuClickVol);
     list_add(app, "Delete Scanned Amiibos", 0, false, MenuDeleteScanned);
     list_add(app, "Delete Favorites", 0, false, MenuDeleteFavorites);
     if(app->settings_index == 0) app->settings_index = MenuVersion;
@@ -1702,7 +1745,7 @@ static void blast_show(App* app, bool on_air) {
 static bool blast_go_on_air(App* app) {
     if(!make_new_uid(app)) return false;
     pages_from_tag(app);
-    amiibo_min_click(app);
+    amiibo_transmit_click(app);
     app->nfc = nfc_alloc();
     const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
     app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
@@ -1827,7 +1870,7 @@ static bool playlist_go_on_air(App* app) {
         app->policy = UidForceOff;
         app->figure_read = true;
         pages_from_tag(app);
-        amiibo_min_click(app);
+        amiibo_transmit_click(app);
         app->nfc = nfc_alloc();
         const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
         app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
@@ -2932,6 +2975,10 @@ static bool custom_event(void* context, uint32_t event) {
     } else if(event == MenuSort) {
         app->sort_series = !app->sort_series;
         app->in_series = false;
+        save_settings(app);
+        show_settings(app);
+    } else if(event == MenuClickVol) {
+        app->click_vol = click_volume_next(app->click_vol);
         save_settings(app);
         show_settings(app);
     } else if(event == MenuKeys) {
