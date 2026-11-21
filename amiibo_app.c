@@ -10,6 +10,7 @@
 #include <gui/gui.h>
 #include <gui/view.h>
 #include <gui/view_stack.h>
+#include <gui/modules/loading.h>
 #include <gui/modules/popup.h>
 #include <gui/modules/widget.h>
 #include <gui/view_dispatcher.h>
@@ -44,6 +45,7 @@ typedef enum {
     ViewNotice,
     ViewBlast,
     ViewPlaylist,
+    ViewLoading,
 } ViewId;
 
 typedef enum {
@@ -74,6 +76,10 @@ typedef enum {
  * the heap. Favorites and Scanned stay at FILE_MAX. */
 #define DIR_LIST_MAX 200
 #define MenuFileBase 400
+/* Show the system Loading hourglass after this much DB work (v1.2 PR #5). */
+#define DB_BUSY_SHOW_MS 200
+/* Cap one recursive tag walk so a pathological SD tree cannot hang forever. */
+#define COUNT_WALK_MAX_ENTRIES 20000
 
 #define APP_VERSION "1.3"
 
@@ -138,7 +144,11 @@ typedef struct {
     View* tag_buttons;
     ViewStack* tag_stack;
     Popup* popup;
+    Loading* loading;
     bool uid_confirm;
+    bool db_busy_active;
+    bool db_busy_shown;
+    uint32_t db_busy_started;
     FuriPubSub* input_pubsub;
     FuriPubSubSubscription* input_subscription;
     NotificationApp* notifications;
@@ -241,8 +251,8 @@ static const char HELP[] =
     "1 second, pauses\n"
     "2 seconds, and repeats.\n"
     "It does not save that\n"
-    "ID. Stop or Back\n"
-    "ends the run.\n"
+    "ID. Back ends the\n"
+    "run.\n"
     "This needs the key\n"
     "file. A click can\n"
     "play when a new ID\n"
@@ -262,8 +272,8 @@ static const char HELP[] =
     "transmits, then waits\n"
     "3 seconds before the\n"
     "next. UIDs stay the\n"
-    "same. Stop or Back\n"
-    "ends the run.\n"
+    "same. Back ends the\n"
+    "run.\n"
     "A missing dump is\n"
     "skipped.\n"
     "\n"
@@ -947,15 +957,9 @@ static void tag_buttons_draw(Canvas* canvas, void* context) {
 
 static bool tag_buttons_input(InputEvent* event, void* context) {
     App* app = context;
-    /* During Blast/Playlist, Stop is the center widget button; OK triggers it.
-     * Back is handled by back_event. Do not swallow other keys here. */
-    if(app->blasting || app->playlist_running) {
-        if(event->type == InputTypeShort && event->key == InputKeyOk) {
-            widget_callback(GuiButtonTypeCenter, event->type, app);
-            return true;
-        }
-        return false;
-    }
+    /* During Blast/Playlist the widget shows left Back; let Left/Back through.
+     * Center must not abort. */
+    if(app->blasting || app->playlist_running) return false;
     if(app->current != ViewTag || app->uid_confirm) return false;
     if(app->origin == OriginBlast) {
         if(event->key == InputKeyOk) {
@@ -1296,7 +1300,33 @@ static bool dump_ok(Storage* storage, const char* path, const char* name, const 
     return false;
 }
 
-static unsigned count_tags_in(App* app, const char* folder) {
+static void db_busy_begin(App* app) {
+    app->db_busy_active = true;
+    app->db_busy_shown = false;
+    app->db_busy_started = furi_get_tick();
+}
+
+static void db_busy_pulse(App* app) {
+    if(!app->db_busy_active) return;
+    if(app->db_busy_shown) return;
+    if(furi_get_tick() - app->db_busy_started < furi_ms_to_ticks(DB_BUSY_SHOW_MS)) return;
+    /* Hourglass from the system Loading view; elevate timers so it animates. */
+    furi_timer_set_thread_priority(FuriTimerThreadPriorityElevated);
+    view_dispatcher_switch_to_view(app->dispatcher, ViewLoading);
+    app->db_busy_shown = true;
+}
+
+static void db_busy_end(App* app) {
+    if(!app->db_busy_active) return;
+    if(app->db_busy_shown) {
+        furi_timer_set_thread_priority(FuriTimerThreadPriorityNormal);
+    }
+    app->db_busy_active = false;
+    app->db_busy_shown = false;
+}
+
+/* Recursive tag walk with busy pulses and an entry cap. */
+static unsigned count_tags_walk(App* app, const char* folder, uint16_t* walked) {
     unsigned count = 0;
     FuriString** subs = NULL;
     uint16_t sub_count = 0;
@@ -1305,7 +1335,10 @@ static unsigned count_tags_in(App* app, const char* folder) {
     if(storage_dir_open(dir, folder)) {
         FileInfo info;
         char name[128];
-        while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+        while(*walked < COUNT_WALK_MAX_ENTRIES &&
+              storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+            (*walked)++;
+            db_busy_pulse(app);
             if(name[0] == '\0' || name[0] == '.') continue;
             if(info.flags & FSF_DIRECTORY) {
                 if(sub_count == sub_cap) {
@@ -1326,11 +1359,18 @@ static unsigned count_tags_in(App* app, const char* folder) {
     }
     storage_file_free(dir);
     for(uint16_t i = 0; i < sub_count; i++) {
-        count += count_tags_in(app, furi_string_get_cstr(subs[i]));
+        if(*walked < COUNT_WALK_MAX_ENTRIES) {
+            count += count_tags_walk(app, furi_string_get_cstr(subs[i]), walked);
+        }
         furi_string_free(subs[i]);
     }
     free(subs);
     return count;
+}
+
+static unsigned count_tags_in(App* app, const char* folder) {
+    uint16_t walked = 0;
+    return count_tags_walk(app, folder, &walked);
 }
 
 static void show_scan(App* app) {
@@ -1774,7 +1814,7 @@ static void blast_show(App* app, bool on_air) {
     furi_string_free(name);
     widget_reset(app->widget);
     widget_add_text_scroll_element(app->widget, 0, 0, 128, 48, furi_string_get_cstr(app->info));
-    widget_add_button_element(app->widget, GuiButtonTypeCenter, "Stop", widget_callback, app);
+    widget_add_button_element(app->widget, GuiButtonTypeLeft, "Back", widget_callback, app);
     app->current = ViewEmulate;
     view_dispatcher_switch_to_view(app->dispatcher, ViewTag);
     if(on_air) notification_message(app->notifications, &sequence_blink_start_magenta);
@@ -1953,7 +1993,7 @@ static void playlist_show(App* app, const char* status, bool blink) {
         status);
     widget_reset(app->widget);
     widget_add_text_scroll_element(app->widget, 0, 0, 128, 48, furi_string_get_cstr(app->info));
-    widget_add_button_element(app->widget, GuiButtonTypeCenter, "Stop", widget_callback, app);
+    widget_add_button_element(app->widget, GuiButtonTypeLeft, "Back", widget_callback, app);
     app->current = ViewEmulate;
     view_dispatcher_switch_to_view(app->dispatcher, ViewTag);
     if(blink) {
@@ -2658,7 +2698,7 @@ static void show_section(App* app, int index) {
 static void section_key(const void* message, void* context) {
     const InputEvent* event = message;
     App* app = context;
-    /* Blast/Playlist: Back aborts (same as Stop). Other keys do not. */
+    /* Blast/Playlist: physical Back aborts (chrome shows left Back). */
     if((app->blasting || app->playlist_running) && event->type == InputTypeShort &&
        event->key == InputKeyBack) {
         if(app->playlist_running) app->playlist_running = false;
@@ -2819,6 +2859,7 @@ static void db_load(App* app) {
         FileInfo info;
         char name[128];
         while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+            db_busy_pulse(app);
             if(name[0] == '\0' || name[0] == '.') continue;
             bool is_dir = (info.flags & FSF_DIRECTORY) != 0;
             if(!is_dir) {
@@ -2841,6 +2882,9 @@ static void db_load(App* app) {
 }
 
 static void show_database(App* app) {
+    /* Long SD walks can take seconds on a full set. Show the system hourglass
+     * once work runs past DB_BUSY_SHOW_MS (v1.2 PR #5 behavior). */
+    db_busy_begin(app);
     db_load(app);
     FuriString* title = furi_string_alloc();
     if(db_is_root(app)) {
@@ -2857,6 +2901,7 @@ static void show_database(App* app) {
     } else {
         if(app->db_index >= app->db_count) app->db_index = 0;
         for(uint16_t i = 0; i < app->db_count; i++) {
+            db_busy_pulse(app);
             FuriString* label = furi_string_alloc_set(app->db_names[i]);
             unsigned row_count = 0;
             bool folder = app->db_is_dir[i] != 0;
@@ -2877,6 +2922,7 @@ static void show_database(App* app) {
         }
     }
     list_select(app, app->db_count == 0 ? MenuEmpty : MenuFileBase + app->db_index);
+    db_busy_end(app);
     app->current = ViewDatabase;
     view_dispatcher_switch_to_view(app->dispatcher, ViewMenu);
     if(app->list_cut) show_cut_notice(app, DIR_LIST_MAX);
@@ -3082,15 +3128,15 @@ static bool custom_event(void* context, uint32_t event) {
         return true;
     }
 
+    /* Left Back chrome on Blast/Playlist routines — same abort as physical Back. */
+    if(event == GuiButtonTypeLeft + 100 && (app->blasting || app->playlist_running)) {
+        if(app->playlist_running) app->playlist_running = false;
+        if(app->blasting) blast_stop(app);
+        else playlist_stop(app);
+        return true;
+    }
+
     if(app->emulating && event == GuiButtonTypeCenter + 100) {
-        if(app->blasting) {
-            blast_stop(app);
-            return true;
-        }
-        if(app->playlist_running) {
-            playlist_stop(app);
-            return true;
-        }
         stop_emulate(app);
         if(!start_emulate(app, true)) show_tag(app);
         return true;
@@ -3344,6 +3390,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_set_draw_callback(app->menu_view, menu_draw);
     view_set_input_callback(app->menu_view, menu_input);
     app->popup = popup_alloc();
+    app->loading = loading_alloc();
     app->menu_timer = furi_timer_alloc(menu_timer_cb, FuriTimerTypePeriodic, app);
     app->help_view = view_alloc();
     view_allocate_model(app->help_view, ViewModelTypeLocking, sizeof(PageModel));
@@ -3385,6 +3432,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_dispatcher_add_view(app->dispatcher, ViewNotice, popup_get_view(app->popup));
     view_dispatcher_add_view(app->dispatcher, ViewHelp, app->help_view);
     view_dispatcher_add_view(app->dispatcher, ViewAbout, app->about_view);
+    view_dispatcher_add_view(app->dispatcher, ViewLoading, loading_get_view(app->loading));
 
     view_dispatcher_set_tick_event_callback(app->dispatcher, app_tick, furi_ms_to_ticks(50));
     show_splash(app);
@@ -3413,6 +3461,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_dispatcher_remove_view(app->dispatcher, ViewNotice);
     view_dispatcher_remove_view(app->dispatcher, ViewHelp);
     view_dispatcher_remove_view(app->dispatcher, ViewAbout);
+    view_dispatcher_remove_view(app->dispatcher, ViewLoading);
     furi_timer_free(app->menu_timer);
     view_free(app->splash_view);
     view_free(app->cleanup_view);
@@ -3421,6 +3470,7 @@ int32_t flipper_amiibo_app(void* arg) {
     view_free(app->about_view);
     widget_free(app->widget);
     popup_free(app->popup);
+    loading_free(app->loading);
     with_view_model(
         app->list_view,
         ListModel * model,
