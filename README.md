@@ -1,6 +1,6 @@
 # Amiibo Emulator
 
-Version 1.2.
+Version 1.3.
 
 This app is similar to the devices that are selling online for $30-50, except this is even better! Whether you want to backup your Amiibo collection and use them on the go, or download a complete set of Amiibos (use Google to find them), this app will ocme in handy! You can then generate random identifiers, so games like Ocarina of Time will allow unlimited loot drops. The "Amiibo Blast" option gives you a new Amiibo identifier sent to your game every couple seconds until you stop it. Then on your game controller, just activate the Amiibo option over and over, and watch the bombs, hearts, arrows, etc rain down around you!
 
@@ -23,10 +23,11 @@ The main menu is a row of pictures. Left and Right move. OK opens one. Back retu
 1. **Amiibo Database** is for Amiibo files you add yourself. You do not need this to use your own scans.
 2. **Favorites** keeps copies of Amiibos you want to use again.
 3. **Scan Amiibos** reads a real Amiibo.
-4. **Amiibo Blast** lists the same Amiibos as Favorites. Blast sends a new ID for 1 second, pauses 2 seconds, and repeats. It does not save that ID. Any key stops.
-5. **Settings** shows the app version, Auto UID, whether the key file is ready, and whether Favorites and Scanned Amiibos are unsorted or grouped by series.
-6. **Help** explains the steps on the Flipper.
-7. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. It also says the app is open source and written by Soap-n-Cartridge. The app does not own Amiibo or Nintendo content.
+4. **Amiibo Blast** lists the same Amiibos as Favorites. Blast sends a new ID for 1 second, pauses 2 seconds, and repeats. It does not save that ID. Back ends the run. An optional click plays when each new ID goes on air (level in Settings).
+5. **Amiibo Playlist** runs a built-in list of dumps from the Amiibo Database folder. The MK8 preset unlocks all amiibo-gated Mii costumes in Mario Kart 8 Deluxe (show next → 1 s wait → transmit 1 s → 3 s pause; UIDs unchanged; Back ends the run; missing dumps are skipped).
+6. **Settings** shows the app version, Auto UID, whether the key file is ready, Sort lists, Click volume (Off / Low / Med / High / Max; default Med; each change plays a test click), and delete options for Favorites and Scanned Amiibos.
+7. **Help** explains the steps on the Flipper.
+8. **About** says Amiibo is a Nintendo trademark and that the characters are copyright Nintendo. It also says the app is open source and written by Soap-n-Cartridge. The app does not own Amiibo or Nintendo content.
 
 From one of these screens, Left and Right jump to the next one.
 
