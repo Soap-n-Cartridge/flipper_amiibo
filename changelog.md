@@ -3,6 +3,8 @@ Amiibo Playlist is a new main-menu picture after Amiibo Blast. It lists one buil
 
 Settings has Click volume: Off, Low, Med, High, or Max (equal steps 0.25–1.0). It applies to the transmit click for Amiibo Blast and Amiibo Playlist. Med is the default. Off plays no click. Changing the setting plays a test click at the new level (Off stays silent). The choice is saved with the other settings.
 
+Key files are found under apps_data/flipper_amiibo or the Amiibo database folder even when they sit in a subfolder. key_retail.bin works, and so do unfixed-info.bin plus locked-secret.bin in the same folder. Existing nfc/amiibo_keys.bin paths still work.
+
 v1.2:
 Settings can delete scanned Amiibos or Favorites. Each one names what will be removed and asks you to hold Up for 2 seconds. The downloaded library on the SD card stays. Deleting one Amiibo you have open still asks first.
 
