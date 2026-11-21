@@ -159,9 +159,9 @@ typedef struct {
     uint8_t blast_saved[AMIIBO_TAG_SIZE];
     bool playlist_running;
     bool playlist_on_air;
+    uint8_t playlist_phase; /* PlaylistPhase* */
     uint32_t playlist_phase_started;
     uint8_t playlist_index;
-    uint8_t playlist_skip_note;
     uint32_t playlist_list_index;
     uint8_t open_series;
     uint8_t series_ids[32];
@@ -239,10 +239,12 @@ static const char HELP[] =
     "all amiibo-gated Mii\n"
     "costumes in Mario Kart\n"
     "8 Deluxe. Each dump\n"
-    "is on for 1 second,\n"
-    "then a 2 second pause.\n"
-    "UIDs are not changed.\n"
-    "Back stops the run.\n"
+    "shows the next dump,\n"
+    "waits 1 second, then\n"
+    "transmits, then waits\n"
+    "3 seconds before the\n"
+    "next. UIDs stay the\n"
+    "same. Back stops.\n"
     "A missing dump is\n"
     "skipped.\n"
     "\n"
@@ -472,17 +474,24 @@ static void show_playlist_list(App* app);
 static void widget_callback(GuiButtonType button, InputType type, void* context);
 static void submenu_callback(void* context, uint32_t index);
 
-/* Transmit click for Blast UID advances and Playlist dump advances.
- * Volume comes from Settings (Off / Low / Med / High). Default is Med. */
+/* Transmit click for Blast, Playlist, and Settings preview.
+ * Volume comes from Settings (Off / Low / Med / High). Default is Med.
+ *
+ * Root cause of silent playlist clicks: firmware message_click is a 1 Hz
+ * impulse held only 10 ms (nearly no acoustic energy), queued with
+ * notification_message (async) immediately before sequence_blink_start_*
+ * which follows in the notification queue. Replace with an audible note,
+ * longer hold, and notification_message_block so the beep finishes before
+ * NFC blink / listener work continues. */
 static NotificationMessage message_force_speaker_volume_click = {
     .type = NotificationMessageTypeForceSpeakerVolumeSetting,
-    .data.forced_settings.speaker_volume = 0.1f,
+    .data.forced_settings.speaker_volume = 0.5f,
 };
 
 static const NotificationSequence sequence_amiibo_click = {
     &message_force_speaker_volume_click,
-    &message_click,
-    &message_delay_10,
+    &message_note_c7,
+    &message_delay_50,
     &message_sound_off,
     NULL,
 };
@@ -490,7 +499,7 @@ static const NotificationSequence sequence_amiibo_click = {
 static float click_volume_level(ClickVolume level) {
     if(level == ClickVolMed) return 0.5f;
     if(level == ClickVolHigh) return 1.0f;
-    return 0.1f; /* Low — former fixed minimum */
+    return 0.1f; /* Low — former fixed “minimum” attempt */
 }
 
 static const char* click_volume_label(ClickVolume level) {
@@ -508,7 +517,9 @@ static void amiibo_transmit_click(App* app) {
     if(app->click_vol == ClickVolOff) return;
     message_force_speaker_volume_click.data.forced_settings.speaker_volume =
         click_volume_level(app->click_vol);
-    notification_message(app->notifications, &sequence_amiibo_click);
+    /* Block until the beep finishes so a following blink sequence cannot
+     * race the short sound on the notification queue. */
+    notification_message_block(app->notifications, &sequence_amiibo_click);
 }
 
 typedef struct {
@@ -545,9 +556,18 @@ static const PlaylistEntry MK8_PLAYLIST[] = {
 };
 
 #define MK8_PLAYLIST_COUNT (sizeof(MK8_PLAYLIST) / sizeof(MK8_PLAYLIST[0]))
+/* Show next dump → wait PREP → transmit SEND → wait GAP → next. */
+#define PLAYLIST_PREP_MS 1000
 #define PLAYLIST_SEND_MS 1000
-#define PLAYLIST_PAUSE_MS 2000
+#define PLAYLIST_GAP_MS 3000
 #define PLAYLIST_SKIP_NOTE_MS 800
+
+enum {
+    PlaylistPhasePrep = 0,
+    PlaylistPhaseTx = 1,
+    PlaylistPhaseGap = 2,
+    PlaylistPhaseSkip = 3,
+};
 
 static const char MK8_PLAYLIST_DESC[] =
     "Unlocks all amiibo-\n"
@@ -1817,90 +1837,90 @@ static bool playlist_resolve_path(App* app, uint8_t index, FuriString* out) {
     return false;
 }
 
-static void playlist_show(App* app, bool on_air, const char* note) {
+static void playlist_show(App* app, const char* status, bool blink) {
     const PlaylistEntry* entry = &MK8_PLAYLIST[app->playlist_index];
-    if(note && note[0]) {
-        furi_string_printf(
-            app->info,
-            "\e#Playlist\n%u/%u %s\n%s\nBack stops",
-            (unsigned)(app->playlist_index + 1),
-            (unsigned)MK8_PLAYLIST_COUNT,
-            entry->costume,
-            note);
-    } else if(on_air) {
-        furi_string_printf(
-            app->info,
-            "\e#Playlist\n%u/%u %s\nOn air\nBack stops",
-            (unsigned)(app->playlist_index + 1),
-            (unsigned)MK8_PLAYLIST_COUNT,
-            entry->costume);
-    } else {
-        furi_string_printf(
-            app->info,
-            "\e#Playlist\n%u/%u %s\nPause\nBack stops",
-            (unsigned)(app->playlist_index + 1),
-            (unsigned)MK8_PLAYLIST_COUNT,
-            entry->costume);
-    }
+    furi_string_printf(
+        app->info,
+        "\e#Playlist\n%u/%u %s\n%s\nBack stops",
+        (unsigned)(app->playlist_index + 1),
+        (unsigned)MK8_PLAYLIST_COUNT,
+        entry->costume,
+        status);
     widget_reset(app->widget);
     widget_add_text_scroll_element(app->widget, 0, 0, 128, 64, furi_string_get_cstr(app->info));
     app->current = ViewEmulate;
     view_dispatcher_switch_to_view(app->dispatcher, ViewTag);
-    if(on_air) notification_message(app->notifications, &sequence_blink_start_magenta);
+    if(blink) {
+        notification_message(app->notifications, &sequence_blink_start_magenta);
+    } else {
+        notification_message(app->notifications, &sequence_blink_stop);
+    }
 }
 
-static bool playlist_go_on_air(App* app) {
+static void playlist_enter_skip(App* app, const char* note) {
+    app->playlist_on_air = false;
+    app->playlist_phase = PlaylistPhaseSkip;
+    app->playlist_phase_started = furi_get_tick();
+    playlist_show(app, note, false);
+}
+
+static bool playlist_begin_slot(App* app) {
     while(app->playlist_index < MK8_PLAYLIST_COUNT) {
         FuriString* path = furi_string_alloc();
         bool found = playlist_resolve_path(app, app->playlist_index, path);
         if(!found) {
-            playlist_show(app, false, "Skip: missing");
-            app->playlist_skip_note = 1;
-            app->playlist_on_air = false;
-            app->playlist_phase_started = furi_get_tick();
             furi_string_free(path);
+            playlist_enter_skip(app, "Skip: missing");
             return true;
         }
         furi_string_set(app->path, path);
         furi_string_free(path);
         if(!load_selected_quiet(app, false)) {
-            playlist_show(app, false, "Skip: bad dump");
-            app->playlist_skip_note = 1;
-            app->playlist_on_air = false;
-            app->playlist_phase_started = furi_get_tick();
+            playlist_enter_skip(app, "Skip: bad dump");
             return true;
         }
         app->policy = UidForceOff;
         app->figure_read = true;
         pages_from_tag(app);
-        amiibo_transmit_click(app);
-        app->nfc = nfc_alloc();
-        const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
-        app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
-        nfc_listener_start(app->listener, NULL, NULL);
-        app->emulating = true;
-        app->playlist_on_air = true;
-        app->playlist_skip_note = 0;
+        app->playlist_on_air = false;
+        app->playlist_phase = PlaylistPhasePrep;
         app->playlist_phase_started = furi_get_tick();
-        playlist_show(app, true, NULL);
+        /* Show next Amiibo details, then wait PREP before transmit. */
+        playlist_show(app, "Next…", false);
         return true;
     }
     return false;
 }
 
-static void playlist_pause(App* app) {
+static void playlist_start_transmit(App* app) {
+    /* Click at the moment transmit begins, before NFC blink, blocking. */
+    amiibo_transmit_click(app);
+    app->nfc = nfc_alloc();
+    const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
+    app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
+    nfc_listener_start(app->listener, NULL, NULL);
+    app->emulating = true;
+    app->playlist_on_air = true;
+    app->playlist_phase = PlaylistPhaseTx;
+    app->playlist_phase_started = furi_get_tick();
+    playlist_show(app, "On air", true);
+}
+
+static void playlist_enter_gap(App* app) {
     stop_listener(app, false, false);
     app->playlist_on_air = false;
+    app->playlist_phase = PlaylistPhaseGap;
     app->playlist_phase_started = furi_get_tick();
-    playlist_show(app, false, NULL);
+    playlist_show(app, "Pause", false);
 }
 
 static void playlist_stop(App* app) {
     if(!app->playlist_running) return;
     app->playlist_running = false;
     app->playlist_on_air = false;
-    app->playlist_skip_note = 0;
+    app->playlist_phase = PlaylistPhasePrep;
     if(app->emulating) stop_listener(app, false, false);
+    notification_message(app->notifications, &sequence_blink_stop);
     app->loaded = false;
     show_playlist_list(app);
 }
@@ -1908,50 +1928,54 @@ static void playlist_stop(App* app) {
 static void playlist_finish(App* app) {
     app->playlist_running = false;
     app->playlist_on_air = false;
-    app->playlist_skip_note = 0;
+    app->playlist_phase = PlaylistPhasePrep;
     if(app->emulating) stop_listener(app, false, false);
+    notification_message(app->notifications, &sequence_blink_stop);
     app->loaded = false;
     app_alert(app, "Playlist done", "All MK8 costumes\nwere sent.");
     show_playlist_list(app);
 }
 
+static void playlist_advance(App* app) {
+    app->playlist_index++;
+    if(app->playlist_index >= MK8_PLAYLIST_COUNT) {
+        playlist_finish(app);
+        return;
+    }
+    if(!playlist_begin_slot(app)) playlist_finish(app);
+}
+
 static void playlist_start(App* app) {
     app->playlist_index = 0;
-    app->playlist_skip_note = 0;
+    app->playlist_phase = PlaylistPhasePrep;
     app->playlist_running = true;
-    if(!playlist_go_on_air(app)) {
+    if(!playlist_begin_slot(app)) {
         playlist_finish(app);
     }
 }
 
 static void playlist_tick(App* app) {
     if(!app->playlist_running) return;
-    if(app->playlist_skip_note) {
-        if((furi_get_tick() - app->playlist_phase_started) <
-           furi_ms_to_ticks(PLAYLIST_SKIP_NOTE_MS)) {
-            return;
-        }
-        app->playlist_skip_note = 0;
-        app->playlist_index++;
-        if(app->playlist_index >= MK8_PLAYLIST_COUNT) {
-            playlist_finish(app);
-            return;
-        }
-        if(!playlist_go_on_air(app)) playlist_finish(app);
+    uint32_t elapsed = furi_get_tick() - app->playlist_phase_started;
+    if(app->playlist_phase == PlaylistPhaseSkip) {
+        if(elapsed < furi_ms_to_ticks(PLAYLIST_SKIP_NOTE_MS)) return;
+        playlist_advance(app);
         return;
     }
-    uint32_t phase_ms = app->playlist_on_air ? PLAYLIST_SEND_MS : PLAYLIST_PAUSE_MS;
-    if((furi_get_tick() - app->playlist_phase_started) < furi_ms_to_ticks(phase_ms)) return;
-    if(app->playlist_on_air) {
-        playlist_pause(app);
+    if(app->playlist_phase == PlaylistPhasePrep) {
+        if(elapsed < furi_ms_to_ticks(PLAYLIST_PREP_MS)) return;
+        playlist_start_transmit(app);
         return;
     }
-    app->playlist_index++;
-    if(app->playlist_index >= MK8_PLAYLIST_COUNT) {
-        playlist_finish(app);
+    if(app->playlist_phase == PlaylistPhaseTx) {
+        if(elapsed < furi_ms_to_ticks(PLAYLIST_SEND_MS)) return;
+        playlist_enter_gap(app);
         return;
     }
-    if(!playlist_go_on_air(app)) playlist_finish(app);
+    if(app->playlist_phase == PlaylistPhaseGap) {
+        if(elapsed < furi_ms_to_ticks(PLAYLIST_GAP_MS)) return;
+        playlist_advance(app);
+    }
 }
 
 static bool playlist_confirm_start(App* app) {
