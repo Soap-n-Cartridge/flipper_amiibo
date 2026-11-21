@@ -2131,6 +2131,12 @@ static void splash_draw(Canvas* canvas, void* model) {
     if(frame >= SPLASH_FRAME_COUNT) frame = SPLASH_FRAME_COUNT - 1;
     canvas_clear(canvas);
     canvas_draw_xbm(canvas, 0, 0, SPLASH_WIDTH, SPLASH_HEIGHT, splash_frames[frame]);
+    /* Version badge: small, bottom-right, over every splash frame (incl. hold). */
+    char ver[12];
+    snprintf(ver, sizeof(ver), "v%s", APP_VERSION);
+    canvas_set_font(canvas, FontSecondary);
+    canvas_set_color(canvas, ColorBlack);
+    canvas_draw_str_aligned(canvas, 126, 62, AlignRight, AlignBottom, ver);
 }
 
 static bool splash_input(InputEvent* event, void* context) {
