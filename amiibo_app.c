@@ -184,9 +184,6 @@ typedef struct {
     bool playlist_on_air;
     uint8_t playlist_index;
     uint32_t playlist_list_index;
-    FuriThread* playlist_thread;
-    char playlist_status[24];
-    bool playlist_blink;
     FuriString* playlist_paths[21];
     FuriString* playlist_root;
     uint8_t playlist_found;
@@ -267,13 +264,10 @@ static const char HELP[] =
     "all amiibo-gated Mii\n"
     "costumes in Mario Kart\n"
     "8 Deluxe. Each dump\n"
-    "shows the next dump,\n"
-    "waits 1 second, then\n"
-    "transmits, then waits\n"
-    "3 seconds before the\n"
-    "next. UIDs stay the\n"
-    "same. Back ends the\n"
-    "run.\n"
+    "stays on air until\n"
+    "you press Next.\n"
+    "UIDs stay the same.\n"
+    "Back ends the run.\n"
     "A missing dump is\n"
     "skipped.\n"
     "\n"
@@ -384,8 +378,8 @@ static const char HELP[] =
     "\n"
     "Click volume sets\n"
     "Off, Low, Med, High,\n"
-    "or Max for Blast and\n"
-    "Playlist clicks.\n"
+    "or Max for Blast\n"
+    "clicks.\n"
     "Med is the default.\n"
     "Changing it plays a\n"
     "test click at that\n"
@@ -512,7 +506,7 @@ static void show_playlist_list(App* app);
 static void widget_callback(GuiButtonType button, InputType type, void* context);
 static void submenu_callback(void* context, uint32_t index);
 
-/* Transmit click for Blast, Playlist, and Settings preview.
+/* Transmit click for Blast and Settings preview (not Playlist).
  * Off / Low / Med / High / Max (equal steps). Default Med.
  *
  * Uses furi_hal_speaker directly (not the notification queue) so NFC blink
@@ -586,20 +580,14 @@ static const PlaylistEntry MK8_PLAYLIST[] = {
 
 #define MK8_PLAYLIST_COUNT (sizeof(MK8_PLAYLIST) / sizeof(MK8_PLAYLIST[0]))
 #define MK8_PLAYLIST_MAX 21
-/* Show next dump → wait PREP → transmit SEND → wait GAP → next.
- * Wall-clock waits run on a worker thread via furi_delay_ms. */
-#define PLAYLIST_PREP_MS 1000
-#define PLAYLIST_SEND_MS 1000
-#define PLAYLIST_GAP_MS 3000
-#define PLAYLIST_SKIP_NOTE_MS 1500
 
 _Static_assert(MK8_PLAYLIST_COUNT == MK8_PLAYLIST_MAX, "playlist size mismatch");
 
 /* Keep short: DialogMessage header + OK leave ~3 FontSecondary lines. */
 static const char MK8_PLAYLIST_DESC[] =
-    "Unlocks all 21 gated\n"
-    "Mii suits in MK8\n"
-    "Deluxe.";
+    "21 gated Mii suits.\n"
+    "Next advances.\n"
+    "Back exits.";
 
 static bool ends_with_i(const char* text, const char* suffix) {
     size_t text_len = strlen(text);
@@ -1118,8 +1106,7 @@ static void tag_buttons_draw(Canvas* canvas, void* context) {
 
 static bool tag_buttons_input(InputEvent* event, void* context) {
     App* app = context;
-    /* During Blast/Playlist the widget shows left Back; let Left/Back through.
-     * Center must not abort. */
+    /* Blast: left Back via widget. Playlist: Left Back + Center Next via widget. */
     if(app->blasting || app->playlist_running) return false;
     if(app->current != ViewTag || app->uid_confirm) return false;
     if(app->origin == OriginBlast) {
@@ -1862,8 +1849,7 @@ enum {
     EventFavNoted = 232,
     EventBlastStop = 233,
     EventPlaylistStop = 234,
-    EventPlaylistUi = 235,
-    EventPlaylistDone = 236,
+    EventPlaylistNext = 235,
 };
 
 #define READ_WAIT_MS 5000
@@ -2143,7 +2129,7 @@ static uint8_t playlist_prepare_paths(App* app) {
     return found;
 }
 
-static void playlist_show(App* app, const char* status, bool blink) {
+static void playlist_show(App* app, const char* status) {
     const PlaylistEntry* entry = &MK8_PLAYLIST[app->playlist_index];
     furi_string_printf(
         app->info,
@@ -2155,36 +2141,14 @@ static void playlist_show(App* app, const char* status, bool blink) {
     widget_reset(app->widget);
     widget_add_text_scroll_element(app->widget, 0, 0, 128, 48, furi_string_get_cstr(app->info));
     widget_add_button_element(app->widget, GuiButtonTypeLeft, "Back", widget_callback, app);
+    widget_add_button_element(app->widget, GuiButtonTypeCenter, "Next", widget_callback, app);
     app->current = ViewEmulate;
     view_dispatcher_switch_to_view(app->dispatcher, ViewTag);
-    if(blink) {
+    if(app->playlist_on_air) {
         notification_message(app->notifications, &sequence_blink_start_magenta);
     } else {
         notification_message(app->notifications, &sequence_blink_stop);
     }
-}
-
-static void playlist_request_ui(App* app, const char* status, bool blink) {
-    snprintf(app->playlist_status, sizeof(app->playlist_status), "%s", status);
-    app->playlist_blink = blink;
-    view_dispatcher_send_custom_event(app->dispatcher, EventPlaylistUi);
-}
-
-/* Real wall-clock wait; Back clears playlist_running from the input path. */
-static bool playlist_wait(App* app, uint32_t ms) {
-    uint32_t start = furi_get_tick();
-    while(app->playlist_running) {
-        if((furi_get_tick() - start) >= furi_ms_to_ticks(ms)) return true;
-        furi_delay_ms(50);
-    }
-    return false;
-}
-
-static void playlist_join_thread(App* app) {
-    if(!app->playlist_thread) return;
-    furi_thread_join(app->playlist_thread);
-    furi_thread_free(app->playlist_thread);
-    app->playlist_thread = NULL;
 }
 
 static void playlist_cleanup_nfc(App* app) {
@@ -2193,76 +2157,42 @@ static void playlist_cleanup_nfc(App* app) {
     notification_message(app->notifications, &sequence_blink_stop);
 }
 
-static int32_t playlist_worker(void* context) {
-    App* app = context;
-    uint8_t sent = 0;
-    uint8_t skipped = 0;
+static void playlist_finish_ui(App* app);
+static bool playlist_go_on_air(App* app);
 
-    for(app->playlist_index = 0;
-        app->playlist_index < MK8_PLAYLIST_COUNT && app->playlist_running;
-        app->playlist_index++) {
-        /* Paths were resolved on the GUI thread against the Database db root. */
-        if(!app->playlist_paths[app->playlist_index]) {
-            skipped++;
-            playlist_request_ui(app, "Skip: missing", false);
-            if(!playlist_wait(app, PLAYLIST_SKIP_NOTE_MS)) break;
-            continue;
+/* Find next loadable dump at or after *index. Returns false if none left. */
+static bool playlist_find_loadable(App* app, uint8_t* index) {
+    while(*index < MK8_PLAYLIST_COUNT) {
+        if(app->playlist_paths[*index]) {
+            furi_string_set(app->path, app->playlist_paths[*index]);
+            if(load_selected_quiet(app, false)) return true;
         }
-        furi_string_set(app->path, app->playlist_paths[app->playlist_index]);
-        if(!load_selected_quiet(app, false)) {
-            skipped++;
-            playlist_request_ui(app, "Skip: bad dump", false);
-            if(!playlist_wait(app, PLAYLIST_SKIP_NOTE_MS)) break;
-            continue;
-        }
-        app->policy = UidForceOff;
-        app->figure_read = true;
-        pages_from_tag(app);
-
-        /* 1) Show details */
-        playlist_request_ui(app, "Next…", false);
-        /* 2) Pause 1 second */
-        if(!playlist_wait(app, PLAYLIST_PREP_MS)) break;
-
-        /* 3) Click then transmit */
-        amiibo_transmit_click(app);
-        app->nfc = nfc_alloc();
-        const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
-        app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
-        nfc_listener_start(app->listener, NULL, NULL);
-        app->emulating = true;
-        app->playlist_on_air = true;
-        playlist_request_ui(app, "On air", true);
-        if(!playlist_wait(app, PLAYLIST_SEND_MS)) {
-            if(app->emulating) stop_listener(app, false, false);
-            app->playlist_on_air = false;
-            break;
-        }
-
-        /* 4) Stop transmit */
-        stop_listener(app, false, false);
-        app->playlist_on_air = false;
-        sent++;
-        playlist_request_ui(app, "Pause", false);
-        /* 5) Pause 3 seconds before next */
-        if(!playlist_wait(app, PLAYLIST_GAP_MS)) break;
+        (*index)++;
     }
+    return false;
+}
 
-    /* Still running means the for-loop finished every slot (not Back-aborted). */
-    bool completed = app->playlist_running;
-    app->playlist_running = false;
-    UNUSED(sent);
-    UNUSED(skipped);
-    if(completed) {
-        view_dispatcher_send_custom_event(app->dispatcher, EventPlaylistDone);
-    }
-    return 0;
+static bool playlist_go_on_air(App* app) {
+    if(!app->playlist_running) return false;
+    if(!playlist_find_loadable(app, &app->playlist_index)) return false;
+
+    app->policy = UidForceOff;
+    app->figure_read = true;
+    pages_from_tag(app);
+    /* No transmit click on playlist — user paces with Next. */
+    app->nfc = nfc_alloc();
+    const MfUltralightData* data = nfc_device_get_data(app->device, NfcProtocolMfUltralight);
+    app->listener = nfc_listener_alloc(app->nfc, NfcProtocolMfUltralight, data);
+    nfc_listener_start(app->listener, NULL, NULL);
+    app->emulating = true;
+    app->playlist_on_air = true;
+    playlist_show(app, "On air");
+    return true;
 }
 
 static void playlist_stop(App* app) {
-    if(!app->playlist_running && !app->playlist_thread) return;
+    if(!app->playlist_running) return;
     app->playlist_running = false;
-    playlist_join_thread(app);
     playlist_cleanup_nfc(app);
     playlist_paths_free(app);
     app->loaded = false;
@@ -2270,7 +2200,7 @@ static void playlist_stop(App* app) {
 }
 
 static void playlist_finish_ui(App* app) {
-    playlist_join_thread(app);
+    app->playlist_running = false;
     playlist_cleanup_nfc(app);
     playlist_paths_free(app);
     app->loaded = false;
@@ -2278,10 +2208,15 @@ static void playlist_finish_ui(App* app) {
     show_playlist_list(app);
 }
 
-static void playlist_start(App* app) {
-    if(app->playlist_thread) playlist_join_thread(app);
+/* Center / Next: leave current dump and transmit the next one. */
+static void playlist_advance(App* app) {
+    if(!app->playlist_running) return;
+    playlist_cleanup_nfc(app);
+    app->playlist_index++;
+    if(!playlist_go_on_air(app)) playlist_finish_ui(app);
+}
 
-    /* Resolve on the GUI thread with the same db root Database uses. */
+static void playlist_start(App* app) {
     uint8_t found = playlist_prepare_paths(app);
     if(found == 0) {
         app_alert(
@@ -2296,8 +2231,10 @@ static void playlist_start(App* app) {
     app->playlist_index = 0;
     app->playlist_on_air = false;
     app->playlist_running = true;
-    app->playlist_thread = furi_thread_alloc_ex("AmiiboPlaylist", 2048, playlist_worker, app);
-    furi_thread_start(app->playlist_thread);
+    if(!playlist_go_on_air(app)) {
+        app_alert(app, "No dumps found", "Could not load\nany playlist dump.");
+        playlist_finish_ui(app);
+    }
 }
 
 static bool playlist_confirm_start(App* app) {
@@ -2861,15 +2798,22 @@ static void show_section(App* app, int index) {
 static void section_key(const void* message, void* context) {
     const InputEvent* event = message;
     App* app = context;
-    /* Blast/Playlist: physical Back aborts (chrome shows left Back). */
-    if((app->blasting || app->playlist_running) && event->type == InputTypeShort &&
-       event->key == InputKeyBack) {
-        if(app->playlist_running) app->playlist_running = false;
-        view_dispatcher_send_custom_event(
-            app->dispatcher, app->blasting ? EventBlastStop : EventPlaylistStop);
+    if(app->playlist_running && event->type == InputTypeShort) {
+        if(event->key == InputKeyBack) {
+            view_dispatcher_send_custom_event(app->dispatcher, EventPlaylistStop);
+            return;
+        }
+        if(event->key == InputKeyOk) {
+            view_dispatcher_send_custom_event(app->dispatcher, EventPlaylistNext);
+            return;
+        }
         return;
     }
-    if(app->playlist_running || app->playlist_thread) return;
+    /* Blast: physical Back aborts (chrome shows left Back). */
+    if(app->blasting && event->type == InputTypeShort && event->key == InputKeyBack) {
+        view_dispatcher_send_custom_event(app->dispatcher, EventBlastStop);
+        return;
+    }
     if(event->type != InputTypeShort && event->type != InputTypeRepeat) return;
     if(event->key == InputKeyLeft || event->key == InputKeyRight) {
         if(event->type != InputTypeShort) return;
@@ -3249,12 +3193,8 @@ static bool custom_event(void* context, uint32_t event) {
         playlist_stop(app);
         return true;
     }
-    if(event == EventPlaylistUi) {
-        playlist_show(app, app->playlist_status, app->playlist_blink);
-        return true;
-    }
-    if(event == EventPlaylistDone) {
-        playlist_finish_ui(app);
+    if(event == EventPlaylistNext) {
+        playlist_advance(app);
         return true;
     }
     if(event == EventSectionLeft || event == EventSectionRight) {
@@ -3291,11 +3231,14 @@ static bool custom_event(void* context, uint32_t event) {
         return true;
     }
 
-    /* Left Back chrome on Blast/Playlist routines — same abort as physical Back. */
+    /* Blast/Playlist chrome: Left Back aborts; Center Next advances playlist. */
     if(event == GuiButtonTypeLeft + 100 && (app->blasting || app->playlist_running)) {
-        if(app->playlist_running) app->playlist_running = false;
         if(app->blasting) blast_stop(app);
         else playlist_stop(app);
+        return true;
+    }
+    if(event == GuiButtonTypeCenter + 100 && app->playlist_running) {
+        playlist_advance(app);
         return true;
     }
 
@@ -3604,9 +3547,9 @@ int32_t flipper_amiibo_app(void* arg) {
     show_splash(app);
     view_dispatcher_run(app->dispatcher);
 
-    if(app->playlist_thread || app->playlist_running) {
+    if(app->playlist_running) {
         app->playlist_running = false;
-        playlist_join_thread(app);
+        playlist_cleanup_nfc(app);
         playlist_paths_free(app);
     }
     if(app->reading) stop_read(app);
