@@ -165,6 +165,9 @@ typedef struct {
     FuriThread* playlist_thread;
     char playlist_status[24];
     bool playlist_blink;
+    FuriString* playlist_paths[21];
+    FuriString* playlist_root;
+    uint8_t playlist_found;
     uint8_t open_series;
     uint8_t series_ids[32];
     uint8_t series_other[32];
@@ -548,12 +551,17 @@ static const PlaylistEntry MK8_PLAYLIST[] = {
 };
 
 #define MK8_PLAYLIST_COUNT (sizeof(MK8_PLAYLIST) / sizeof(MK8_PLAYLIST[0]))
+#define MK8_PLAYLIST_MAX 21
+/* Same on-disk folder the app mkdirs at launch (appid flipper_amiibo). */
+#define AMIIBO_EXT_DATA_DIR "/ext/apps_data/flipper_amiibo"
 /* Show next dump → wait PREP → transmit SEND → wait GAP → next.
  * Wall-clock waits run on a worker thread via furi_delay_ms. */
 #define PLAYLIST_PREP_MS 1000
 #define PLAYLIST_SEND_MS 1000
 #define PLAYLIST_GAP_MS 3000
 #define PLAYLIST_SKIP_NOTE_MS 1500
+
+_Static_assert(MK8_PLAYLIST_COUNT == MK8_PLAYLIST_MAX, "playlist size mismatch");
 
 static const char MK8_PLAYLIST_DESC[] =
     "Unlocks all amiibo-\n"
@@ -1813,35 +1821,103 @@ static void blast_tick(App* app) {
     }
 }
 
-static bool playlist_try_path(App* app, FuriString* out, const char* prefix, const char* rel) {
-    if(!rel) return false;
-    if(prefix && prefix[0]) {
-        furi_string_printf(out, "%s/%s%s", APP_DATA_PATH("db"), prefix, rel);
-    } else {
-        furi_string_printf(out, "%s/%s", APP_DATA_PATH("db"), rel);
+static bool playlist_dir_exists(Storage* storage, const char* path) {
+    FileInfo info;
+    return storage_common_stat(storage, path, &info) == FSE_OK && (info.flags & FSF_DIRECTORY);
+}
+
+/* Pick the Full Set root the same way Database browsing expects: under db/,
+ * optionally one nested folder (e.g. Amiibo Full Set) that contains Smash. */
+static void playlist_pick_root(App* app, FuriString* root) {
+    const char* bases[] = {
+        APP_DATA_PATH("db"), /* same as app->db_path / Database browser */
+        AMIIBO_EXT_DATA_DIR "/db", /* explicit SD path (appid flipper_amiibo) */
+    };
+    FuriString* probe = furi_string_alloc();
+    for(size_t b = 0; b < COUNT_OF(bases); b++) {
+        furi_string_printf(probe, "%s/Super Smash Bros Amiibo", bases[b]);
+        if(playlist_dir_exists(app->storage, furi_string_get_cstr(probe))) {
+            furi_string_set(root, bases[b]);
+            furi_string_free(probe);
+            return;
+        }
+        furi_string_printf(probe, "%s/Amiibo Full Set/Super Smash Bros Amiibo", bases[b]);
+        if(playlist_dir_exists(app->storage, furi_string_get_cstr(probe))) {
+            furi_string_printf(root, "%s/Amiibo Full Set", bases[b]);
+            furi_string_free(probe);
+            return;
+        }
+        /* One-level scan: db/<folder>/Super Smash Bros Amiibo */
+        File* dir = storage_file_alloc(app->storage);
+        if(storage_dir_open(dir, bases[b])) {
+            FileInfo info;
+            char name[128];
+            while(storage_dir_read(dir, &info, name, (uint16_t)sizeof(name))) {
+                if(!(info.flags & FSF_DIRECTORY) || name[0] == '\0' || name[0] == '.') continue;
+                furi_string_printf(probe, "%s/%s/Super Smash Bros Amiibo", bases[b], name);
+                if(playlist_dir_exists(app->storage, furi_string_get_cstr(probe))) {
+                    furi_string_printf(root, "%s/%s", bases[b], name);
+                    storage_dir_close(dir);
+                    storage_file_free(dir);
+                    furi_string_free(probe);
+                    return;
+                }
+            }
+            storage_dir_close(dir);
+        }
+        storage_file_free(dir);
     }
+    furi_string_free(probe);
+    /* Fall back to the Database browser root even if empty. */
+    furi_string_set(root, APP_DATA_PATH("db"));
+}
+
+static bool playlist_try_rel(App* app, const char* root, const char* rel, FuriString* out) {
+    if(!rel) return false;
+    furi_string_printf(out, "%s/%s", root, rel);
     return storage_file_exists(app->storage, furi_string_get_cstr(out));
 }
 
-static bool playlist_resolve_path(App* app, uint8_t index, FuriString* out) {
+static bool playlist_resolve_into(App* app, uint8_t index, const char* root, FuriString* out) {
     if(index >= MK8_PLAYLIST_COUNT) return false;
     const PlaylistEntry* entry = &MK8_PLAYLIST[index];
-    /* db/<rel>, db/Amiibo Full Set/<rel>, then alt names with both prefixes. */
-    static const char* const prefixes[] = {"", "Amiibo Full Set/"};
-    for(size_t p = 0; p < COUNT_OF(prefixes); p++) {
-        if(playlist_try_path(app, out, prefixes[p], entry->rel_path)) return true;
-        if(playlist_try_path(app, out, prefixes[p], entry->alt_path)) return true;
-    }
+    if(playlist_try_rel(app, root, entry->rel_path, out)) return true;
+    if(playlist_try_rel(app, root, entry->alt_path, out)) return true;
     return false;
 }
 
-static uint8_t playlist_count_found(App* app) {
+static void playlist_paths_free(App* app) {
+    for(uint8_t i = 0; i < MK8_PLAYLIST_MAX; i++) {
+        if(app->playlist_paths[i]) {
+            furi_string_free(app->playlist_paths[i]);
+            app->playlist_paths[i] = NULL;
+        }
+    }
+    if(app->playlist_root) {
+        furi_string_free(app->playlist_root);
+        app->playlist_root = NULL;
+    }
+    app->playlist_found = 0;
+}
+
+/* Resolve all slots on the GUI thread using the Database db root. */
+static uint8_t playlist_prepare_paths(App* app) {
+    playlist_paths_free(app);
+    app->playlist_root = furi_string_alloc();
+    playlist_pick_root(app, app->playlist_root);
+    const char* root = furi_string_get_cstr(app->playlist_root);
     uint8_t found = 0;
     FuriString* path = furi_string_alloc();
     for(uint8_t i = 0; i < MK8_PLAYLIST_COUNT; i++) {
-        if(playlist_resolve_path(app, i, path)) found++;
+        if(playlist_resolve_into(app, i, root, path)) {
+            app->playlist_paths[i] = furi_string_alloc_set(path);
+            found++;
+        } else {
+            app->playlist_paths[i] = NULL;
+        }
     }
     furi_string_free(path);
+    app->playlist_found = found;
     return found;
 }
 
@@ -1902,17 +1978,14 @@ static int32_t playlist_worker(void* context) {
     for(app->playlist_index = 0;
         app->playlist_index < MK8_PLAYLIST_COUNT && app->playlist_running;
         app->playlist_index++) {
-        FuriString* path = furi_string_alloc();
-        bool found = playlist_resolve_path(app, app->playlist_index, path);
-        if(!found) {
-            furi_string_free(path);
+        /* Paths were resolved on the GUI thread against the Database db root. */
+        if(!app->playlist_paths[app->playlist_index]) {
             skipped++;
             playlist_request_ui(app, "Skip: missing", false);
             if(!playlist_wait(app, PLAYLIST_SKIP_NOTE_MS)) break;
             continue;
         }
-        furi_string_set(app->path, path);
-        furi_string_free(path);
+        furi_string_set(app->path, app->playlist_paths[app->playlist_index]);
         if(!load_selected_quiet(app, false)) {
             skipped++;
             playlist_request_ui(app, "Skip: bad dump", false);
@@ -1968,6 +2041,7 @@ static void playlist_stop(App* app) {
     app->playlist_running = false;
     playlist_join_thread(app);
     playlist_cleanup_nfc(app);
+    playlist_paths_free(app);
     app->loaded = false;
     show_playlist_list(app);
 }
@@ -1975,6 +2049,7 @@ static void playlist_stop(App* app) {
 static void playlist_finish_ui(App* app) {
     playlist_join_thread(app);
     playlist_cleanup_nfc(app);
+    playlist_paths_free(app);
     app->loaded = false;
     app_alert(app, "Playlist done", "MK8 playlist finished.");
     show_playlist_list(app);
@@ -1983,12 +2058,14 @@ static void playlist_finish_ui(App* app) {
 static void playlist_start(App* app) {
     if(app->playlist_thread) playlist_join_thread(app);
 
-    uint8_t found = playlist_count_found(app);
+    /* Resolve on the GUI thread with the same db root Database uses. */
+    uint8_t found = playlist_prepare_paths(app);
     if(found == 0) {
         app_alert(
             app,
             "No dumps found",
-            "Put Full Set folders\nin apps_data/\nflipper_amiibo/db");
+            "Need Smash/Mario\nfolders in\napps_data/\nflipper_amiibo/db");
+        playlist_paths_free(app);
         show_playlist_list(app);
         return;
     }
@@ -3290,6 +3367,7 @@ int32_t flipper_amiibo_app(void* arg) {
     if(app->playlist_thread || app->playlist_running) {
         app->playlist_running = false;
         playlist_join_thread(app);
+        playlist_paths_free(app);
     }
     if(app->reading) stop_read(app);
     if(app->emulating) stop_emulate(app);
